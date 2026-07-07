@@ -180,13 +180,14 @@ Override with CLI flags:
 | `/myaddr` | Show your shareable multiaddress |
 | `/connect <multiaddr>` | Connect to a peer directly |
 | `/relay <multiaddr>` | Connect via a relay peer (no port forwarding) |
-| `/tunnel [addr]` | Create a TCP tunnel (default bore.pub:1234) |
+| `/tunnel <addr>` | Create a TCP tunnel (requires tunnel server) |
 | `/disconnect` | Disconnect all peers |
 | `/peers` | List known peers |
 | `/org create <name>` | Create an organization |
 | `/channel create <name>` | Create a channel |
 | `/dm <peer_id>` | Open a direct message |
 | `/profile` | Show your identity info (fingerprint) |
+| `/publicip` | Look up your public IP (for port forwarding) |
 | `/quit` | Exit |
 
 ### Connecting to Peers
@@ -279,14 +280,18 @@ If you can configure your router, run `/myaddr` and share the address. Forwards 
 
 go-chat has a built-in TCP tunnel client. It works with any public bore-compatible server.
 
-**Quick start (uses free `bore.pub`):**
+**Usage:**
 
-1. On your machine, inside go-chat:
+1. Run a tunnel server on a public machine:
+   ```bash
+   chat --serve --tunnel :1234
    ```
-   /tunnel
+2. On your machine, inside go-chat:
    ```
-2. It prints a `/connect <address>` — share that with your peer
-3. Peer types:
+   /tunnel <server-ip>:1234
+   ```
+3. It prints a `/connect <address>` — share that with your peer
+4. Peer connects:
    ```
    /connect /ip4/<tunnel_ip>/tcp/<port>/p2p/<peer_id>
    ```

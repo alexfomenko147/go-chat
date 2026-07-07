@@ -10,6 +10,9 @@ import (
 	"go-chat/internal/storage"
 	"go-chat/internal/tunnel"
 
+	"io"
+	"net/http"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -366,10 +369,11 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 			id.DisplayName, id.PeerID, fp))
 
 	case "/tunnel":
-		serverAddr := "bore.pub:1234"
-		if len(parts) > 1 {
-			serverAddr = parts[1]
+		if len(parts) < 2 {
+			m.addStatus("Usage: /tunnel <server-addr>  (e.g. /tunnel 1.2.3.4:1234)")
+			return nil
 		}
+		serverAddr := parts[1]
 
 		localPort := 0
 		for _, addr := range m.app.AllAddrs() {
@@ -380,7 +384,7 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 		}
 
 		if localPort == 0 {
-			m.addStatus("Could not determine local port. Are you connected?")
+			m.addStatus("Could not determine local port.")
 			return nil
 		}
 
@@ -394,6 +398,29 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 			}
 			host, _, _ := net.SplitHostPort(serverAddr)
 			m.addStatus(fmt.Sprintf("Tunnel active! Share: /connect /ip4/%s/tcp/%d/p2p/%s", host, publicPort, m.app.PeerID()))
+		}()
+
+	case "/publicip":
+		m.addStatus("Looking up public IP...")
+		go func() {
+			ip, err := fetchPublicIP()
+			if err != nil {
+				m.addStatus(fmt.Sprintf("Public IP lookup failed: %v", err))
+				m.addStatus("Try: curl ifconfig.me  (in another terminal)")
+				return
+			}
+			port := 0
+			for _, addr := range m.app.AllAddrs() {
+				if p := extractPort(addr); p > 0 {
+					port = p
+					break
+				}
+			}
+			if port > 0 {
+				m.addStatus(fmt.Sprintf("If UPnP works or port %d is forwarded: /connect /ip4/%s/tcp/%d/p2p/%s", port, ip, port, m.app.PeerID()))
+			} else {
+				m.addStatus(fmt.Sprintf("Public IP: %s", ip))
+			}
 		}()
 
 	case "/quit":
@@ -644,10 +671,11 @@ func (m *Model) renderStatusBar() string {
 func (m Model) helpView() string {
 	return HelpStyle.Render(`Commands:
   /help             Show this help
-  /myaddr           Show your shareable multiaddress
+  /myaddr           Show your local addresses
+  /publicip         Look up your public IP
   /connect <addr>   Connect to a peer directly
   /relay <addr>     Connect via a relay peer
-  /tunnel [addr]    Create TCP tunnel (default bore.pub:1234)
+  /tunnel <addr>    Create TCP tunnel (requires tunnel server)
   /disconnect       Disconnect all peers
   /peers            List known peers
   /org create       Create an organization
@@ -664,11 +692,10 @@ Keys:
   P          Toggle peers
   Ctrl+C     Quit
 
-Tunnel (no public IP needed):
-  /tunnel           Creates tunnel via bore.pub
-  Share the printed /connect address with peers
-  Or run your own: chat --serve --tunnel :1234
-  Then: /tunnel <your-server-ip>:1234`)
+Internet:
+  /publicip         Show your public IP (for port forwarding)
+  /tunnel <addr>    TCP tunnel via a public server
+  /relay <addr>     libp2p relay (requires public server)`)
 }
 
 func (m Model) peersView() string {
@@ -696,4 +723,17 @@ func extractPort(addr string) int {
 		}
 	}
 	return 0
+}
+
+func fetchPublicIP() (string, error) {
+	resp, err := http.Get("https://api.ipify.org")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	ip, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(ip)), nil
 }
