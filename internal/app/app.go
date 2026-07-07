@@ -361,10 +361,11 @@ func (a *App) OpenDM(peerID string) error {
 		return err
 	}
 	if ch == nil {
+		dn := a.GetPeerDisplayName(peerID)
 		now := time.Now().UTC()
 		ch = &storage.Channel{
 			ChannelID:   channelID,
-			Name:        fmt.Sprintf("DM-%s", peerID[:8]),
+			Name:        fmt.Sprintf("DM-%s", dn),
 			ChannelType: "dm",
 			CreatedAt:   now,
 			UpdatedAt:   now,

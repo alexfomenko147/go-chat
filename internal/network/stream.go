@@ -75,6 +75,11 @@ func (h *StreamHandler) handleMessage(msg *Message, s network.Stream) {
 			h.handleSyncMessage(msg)
 			h.notifyRefresh()
 		}
+	case "sync_peer":
+		if h.node.Store != nil {
+			h.handleSyncPeer(msg)
+			h.notifyRefresh()
+		}
 	default:
 		h.node.Logger.Debug("unknown message type: %s", msg.Type)
 	}
@@ -119,6 +124,18 @@ func (h *StreamHandler) sendFullState(s network.Stream) {
 				Content:     ch.Name,
 				ChannelType: ch.ChannelType,
 				Timestamp:   ch.CreatedAt.UnixMilli(),
+			})
+		}
+	}
+
+	allPeers, err := h.node.Store.ListPeers()
+	if err == nil {
+		for _, p := range allPeers {
+			_ = h.SendMessage(s, &Message{
+				Type:      "sync_peer",
+				SenderID:  p.PeerID,
+				Content:   p.DisplayName,
+				Timestamp: time.Now().UnixMilli(),
 			})
 		}
 	}
@@ -205,6 +222,18 @@ func (h *StreamHandler) handleSyncChannel(msg *Message, s network.Stream) {
 	if err := h.node.Store.SaveChannel(ch); err != nil {
 		h.node.Logger.Warn("save synced channel: %v", err)
 	}
+}
+
+func (h *StreamHandler) handleSyncPeer(msg *Message) {
+	if msg.SenderID == "" {
+		return
+	}
+	_ = h.node.Store.SavePeer(&storage.Peer{
+		PeerID:      msg.SenderID,
+		DisplayName: msg.Content,
+		Status:      "online",
+		LastSeen:    time.Now().UTC(),
+	})
 }
 
 func (h *StreamHandler) remotePeerID(s network.Stream) string {

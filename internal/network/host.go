@@ -263,6 +263,16 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 			})
 		}
 
+		allPeers, _ := n.Store.ListPeers()
+		for _, p := range allPeers {
+			handler.SendMessage(s, &Message{
+				Type:      "sync_peer",
+				SenderID:  p.PeerID,
+				Content:   p.DisplayName,
+				Timestamp: time.Now().UnixMilli(),
+			})
+		}
+
 		msgs, _ := n.Store.ListAllMessages(50)
 		for _, msg := range msgs {
 			handler.SendMessage(s, &Message{
@@ -295,6 +305,10 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 		case "sync_channel":
 			if n.Store != nil {
 				handler.handleSyncChannel(&msg, s)
+			}
+		case "sync_peer":
+			if n.Store != nil {
+				handler.handleSyncPeer(&msg)
 			}
 		case "message":
 			if n.Store != nil {
