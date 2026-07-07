@@ -316,15 +316,26 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 	case "/myaddr":
 		peerID := m.app.PeerID()
 		allAddrs := m.app.AllAddrs()
-		m.addStatus(fmt.Sprintf("=== Peer ID: %s ===", peerID))
+		var lines []string
+		lines = append(lines, fmt.Sprintf("=== Peer ID: %s ===", peerID))
 		for _, addr := range allAddrs {
-			m.addStatus(fmt.Sprintf("  %s", addr))
+			lines = append(lines, fmt.Sprintf("  %s", addr))
 		}
-		m.addStatus("---")
+		lines = append(lines, "---")
 		if len(allAddrs) > 0 {
-			m.addStatus(fmt.Sprintf("Share: /connect %s", allAddrs[0]))
+			lines = append(lines, fmt.Sprintf("Give this to peers: /connect %s", allAddrs[0]))
 		}
-		m.addStatus("Peer can find you via mDNS (LAN), DHT (internet), or a relay")
+		lines = append(lines, "LAN: auto-discovered via mDNS | Internet: use /connect")
+		m.addStatus(lines[0])
+		for _, line := range lines[1:] {
+			m.messages = append(m.messages, MessageItem{
+				Sender:    "● system",
+				Content:   line,
+				Timestamp: "now",
+			})
+		}
+		m.chatView.SetContent(m.renderMessages())
+		m.chatView.GotoBottom()
 
 	case "/relay":
 		if len(parts) < 2 {
