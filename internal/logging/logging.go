@@ -44,13 +44,15 @@ type Logger struct {
 	dir      string
 	basename string
 	uiBuf    []LogEntry
+	console  bool
 }
 
 func New(level string, path string, rotate bool) (*Logger, error) {
 	l := &Logger{
-		level:  parseLevel(level),
-		rotate: rotate,
-		uiBuf:  make([]LogEntry, 0, 100),
+		level:   parseLevel(level),
+		rotate:  rotate,
+		uiBuf:   make([]LogEntry, 0, 100),
+		console: true,
 	}
 
 	writers := []io.Writer{os.Stderr}
@@ -109,6 +111,24 @@ func (l *Logger) log(level Level, format string, args ...any) {
 	l.uiBuf = append(l.uiBuf, entry)
 }
 
+func (l *Logger) SetConsoleOutput(enabled bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.console = enabled
+	var writers []io.Writer
+	if enabled {
+		writers = append(writers, os.Stderr)
+	}
+	if l.file != nil {
+		writers = append(writers, l.file)
+	}
+	if len(writers) == 0 {
+		l.logger.SetOutput(io.Discard)
+	} else {
+		l.logger.SetOutput(io.MultiWriter(writers...))
+	}
+}
+
 func (l *Logger) UIMessages() []LogEntry {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -152,7 +172,11 @@ func (l *Logger) rotateIfNeeded() {
 	}
 	l.file = f
 
-	writers := []io.Writer{os.Stderr, f}
+	var writers []io.Writer
+	if l.console {
+		writers = append(writers, os.Stderr)
+	}
+	writers = append(writers, f)
 	l.logger.SetOutput(io.MultiWriter(writers...))
 }
 

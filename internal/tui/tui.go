@@ -53,6 +53,7 @@ type Model struct {
 	logPanelFocused bool
 
 	pendingConnect string
+	needsName      bool
 
 	err          error
 }
@@ -64,13 +65,24 @@ func NewModel(a *app.App) *Model {
 	ti.CharLimit = 2000
 	ti.Width = 60
 
-	return &Model{
+	a.Logger.SetConsoleOutput(false)
+
+	needsName := a.IsDefaultName()
+
+	m := &Model{
 		app:         a,
 		input:       ti,
 		inputMode:   true,
 		firstLaunch: true,
+		needsName:   needsName,
 		statusText:  fmt.Sprintf("PeerID: %s | /myaddr to see shareable address", a.PeerID()),
 	}
+
+	if needsName {
+		ti.Placeholder = "Enter your display name..."
+	}
+
+	return m
 }
 
 type tickMsg time.Time
@@ -201,6 +213,24 @@ func (m *Model) handleInput() tea.Cmd {
 	m.input.SetValue("")
 
 	if text == "" {
+		return nil
+	}
+
+	if m.needsName {
+		m.needsName = false
+		m.input.Placeholder = "Type a message or /help..."
+		if strings.HasPrefix(text, "/") {
+			return m.handleCommand(text)
+		}
+		name := strings.TrimSpace(text)
+		if name == "" || name == "me" || strings.HasPrefix(name, "me_") {
+			m.addStatus("Invalid or reserved name")
+			m.needsName = true
+			m.input.Placeholder = "Enter your display name..."
+			return nil
+		}
+		m.app.SetDisplayName(name)
+		m.addStatus(fmt.Sprintf("Display name set to '%s'", name))
 		return nil
 	}
 
@@ -493,6 +523,20 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 		m.chatView.SetContent(m.renderMessages())
 		m.chatView.GotoBottom()
 
+	case "/name":
+		if len(parts) < 2 {
+			m.addStatus(fmt.Sprintf("Current name: %s", m.app.Identity().DisplayName))
+			m.addStatus("Usage: /name <new name>")
+			return nil
+		}
+		name := strings.Join(parts[1:], " ")
+		if name == "" || name == "me" || strings.HasPrefix(name, "me_") {
+			m.addStatus("Invalid or reserved name")
+			return nil
+		}
+		m.app.SetDisplayName(name)
+		m.addStatus(fmt.Sprintf("Display name changed to '%s'", name))
+
 	case "/quit":
 		return tea.Quit
 
@@ -748,6 +792,7 @@ func (m Model) helpView() string {
   /peers            List known peers
   /channel create   Create a channel
   /dm <peer>        Open direct message
+  /name [name]      Show or set your display name
   /profile          Show your profile
   /quit             Quit
 

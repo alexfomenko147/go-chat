@@ -200,6 +200,7 @@ Override with CLI flags:
 | `/peers` | List known peers |
 | `/channel create <name>` | Create a channel |
 | `/dm <peer_id>` | Open a direct message |
+| `/name [name]` | Show or set your display name |
 | `/profile` | Show your identity info (fingerprint) |
 | `/publicip` | Look up your public IP (for port forwarding) |
 | `/quit` | Exit |
