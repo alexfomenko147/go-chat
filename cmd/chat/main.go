@@ -25,7 +25,7 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Println("go-chat v0.1.2")
+		fmt.Println("go-chat v0.1.0")
 		return
 	}
 

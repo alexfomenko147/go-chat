@@ -22,11 +22,13 @@
 - **Local-first** — All data stored in SQLite. You own everything.
 - **Terminal UI** — Built with Bubble Tea, Lip Gloss, and Bubbles.
 - **libp2p networking** — TCP, QUIC, mDNS discovery, relay, NAT traversal, hole punching.
+- **Color-coded senders** — Each peer gets a unique color in chat.
 - **Organizations & Channels** — Create orgs, channels, manage members and permissions.
 - **Direct Messages** — Encrypted peer-to-peer conversations.
 - **Automatic peer discovery** — mDNS for LAN, DHT for internet, bootstrap peers.
 - **Ed25519 identities** — Generated locally on first launch. Fingerprint-based verification.
 - **Offline-first** — Messages queued locally, synced when peers reconnect.
+- **Saved connections** — Recent `/connect` targets saved for quick reconnection.
 - **Cross-platform** — Linux amd64/arm64, macOS Intel/Apple Silicon, Windows amd64/arm64.
 
 ## Quick Start
@@ -87,6 +89,8 @@ On first launch, go-chat automatically:
 4. Starts listening on a random TCP port
 5. Discovers peers via mDNS on the local network
 
+Type `/connect <address>` to connect to a peer. If your display name is still the default (`user-<hostname>`), you'll be prompted to set one on first connect.
+
 ## Configuration
 
 Config is loaded from `~/.config/go-chat/config.yaml` (created automatically with defaults).
@@ -143,6 +147,7 @@ Override with CLI flags:
 ./chat --serve                   # Headless relay mode (no TUI)
 ./chat --serve --tunnel :1234    # Relay + TCP tunnel server
 ./chat --config /path/to/config.yaml
+./chat --name "myname"           # Set display name (skips connect prompt)
 ./chat --version
 ```
 
@@ -154,26 +159,27 @@ Override with CLI flags:
 ### TUI Layout
 
 ```
-+----------+--------------------------+-----------------------------------+
-| Orgs     | Channels                 | Chat                              |
-|          |                          |                                   |
-|  My Org  |  # general               |  12:30 alice: hello               |
-|          |  # random                |  12:31 bob: hi                    |
-|          |                          |                                   |
-+----------+--------------------------+                                   |
-| Status: My Org / #general                          [INPUT] Peers: 2 |
-+----------+--------------------------+-----------------------------------+
-| Input / Command Line                                                  |
-+----------------------------------------------------------------------+
++-----------------------------+----------------------------------------+
+| Channels                    | Chat                                   |
+|                             |                                        |
+|  # general                  |  12:30 alice: hello                    |
+|  # random                   |  12:31 bob: hi                         |
+|                             |                                        |
++-----------------------------+                                        |
+| Logs                        |                                        |
++-----------------------------+                                        |
+| Status: #general                        [INPUT] Peers: 2            |
++-----------------------------+----------------------------------------+
+| Input / Command Line                                                   |
++-----------------------------------------------------------------------+
 ```
 
 ### Navigation
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Cycle: input mode → channels → orgs |
+| `Tab` | Cycle: input mode → channels → logs |
 | `Up` / `Down` | Switch channels (nav mode) / scroll chat (input mode) |
-| `Left` / `Right` | Switch organizations (nav mode) |
 | `Enter` | Send message / switch to input mode |
 | `?` | Toggle help |
 | `P` | Toggle peers list |
@@ -186,11 +192,12 @@ Override with CLI flags:
 | `/help` | Show help |
 | `/myaddr` | Show your shareable multiaddress |
 | `/connect <multiaddr>` | Connect to a peer directly |
+| `/connect <index>` | Reconnect to a saved connection |
+| `/connections` | List saved connections |
 | `/relay <multiaddr>` | Connect via a relay peer (no port forwarding) |
 | `/tunnel <addr>` | Create a TCP tunnel (requires tunnel server) |
 | `/disconnect` | Disconnect all peers |
 | `/peers` | List known peers |
-| `/org create <name>` | Create an organization |
 | `/channel create <name>` | Create a channel |
 | `/dm <peer_id>` | Open a direct message |
 | `/profile` | Show your identity info (fingerprint) |
@@ -324,7 +331,7 @@ Add bootstrap peer multiaddrs to `network.bootstrap_peers` in config for always-
 
 Your identity is automatically generated on first launch:
 
-- **Display name** — Configurable via config or future /nick command
+- **Display name** — Defaults to `user-<hostname>`, set during first `/connect`
 - **Peer ID** — Derived from your Ed25519 public key (e.g., `12D3KooW...`)
 - **Keypair** — Ed25519 for identity, X25519 for key exchange
 - **Fingerprint** — First 16 bytes of SHA-256 of your public key
@@ -376,6 +383,7 @@ Local SQLite database (`chat.db`) with the following tables:
 - `attachments` — File transfer metadata
 - `invites` — Pending invitations
 - `reactions` — Emoji reactions on messages
+- `connections` — Saved `/connect` targets for quick reconnection
 - `settings` — Key-value settings store
 - `sessions` — Cryptographic session keys
 
@@ -463,9 +471,9 @@ Every version tag (`v*`) pushed to GitHub triggers an automated release via GitH
 ### Create a Release
 
 ```bash
-# Tag the release
-git tag v0.1.0
-git push origin v0.1.0
+# Tag the release (force-push to override)
+git tag -f v0.1.0
+git push origin v0.1.0 -f
 ```
 
 The workflow at `.github/workflows/release.yml` handles the rest.
