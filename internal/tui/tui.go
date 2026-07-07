@@ -2,11 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"go-chat/internal/app"
 	"go-chat/internal/crypto"
 	"go-chat/internal/storage"
+	"go-chat/internal/tunnel"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -363,6 +365,37 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 		m.addStatus(fmt.Sprintf("Profile: %s | PeerID: %s | Fingerprint: %s",
 			id.DisplayName, id.PeerID, fp))
 
+	case "/tunnel":
+		serverAddr := "bore.pub:1234"
+		if len(parts) > 1 {
+			serverAddr = parts[1]
+		}
+
+		localPort := 0
+		for _, addr := range m.app.AllAddrs() {
+			if p := extractPort(addr); p > 0 {
+				localPort = p
+				break
+			}
+		}
+
+		if localPort == 0 {
+			m.addStatus("Could not determine local port. Are you connected?")
+			return nil
+		}
+
+		m.addStatus(fmt.Sprintf("Connecting to tunnel %s ...", serverAddr))
+
+		go func() {
+			publicPort, err := tunnel.RunClient(serverAddr, localPort)
+			if err != nil {
+				m.addStatus(fmt.Sprintf("Tunnel error: %v", err))
+				return
+			}
+			host, _, _ := net.SplitHostPort(serverAddr)
+			m.addStatus(fmt.Sprintf("Tunnel active! Share: /connect /ip4/%s/tcp/%d/p2p/%s", host, publicPort, m.app.PeerID()))
+		}()
+
 	case "/quit":
 		return tea.Quit
 
@@ -614,6 +647,7 @@ func (m Model) helpView() string {
   /myaddr           Show your shareable multiaddress
   /connect <addr>   Connect to a peer directly
   /relay <addr>     Connect via a relay peer
+  /tunnel [addr]    Create TCP tunnel (default bore.pub:1234)
   /disconnect       Disconnect all peers
   /peers            List known peers
   /org create       Create an organization
@@ -628,7 +662,13 @@ Keys:
   Enter      Send message / confirm
   ?          Toggle help
   P          Toggle peers
-  Ctrl+C     Quit`)
+  Ctrl+C     Quit
+
+Tunnel (no public IP needed):
+  /tunnel           Creates tunnel via bore.pub
+  Share the printed /connect address with peers
+  Or run your own: chat --serve --tunnel :1234
+  Then: /tunnel <your-server-ip>:1234`)
 }
 
 func (m Model) peersView() string {
@@ -640,4 +680,20 @@ func (m Model) peersView() string {
 		items = append(items, fmt.Sprintf("  %s (%s)", p.DisplayName, p.Status))
 	}
 	return strings.Join(items, "\n")
+}
+
+func extractPort(addr string) int {
+	if !strings.HasPrefix(addr, "/") {
+		return 0
+	}
+	parts := strings.Split(addr, "/")
+	for i, part := range parts {
+		if part == "tcp" && i+1 < len(parts) {
+			var port int
+			if _, err := fmt.Sscanf(parts[i+1], "%d", &port); err == nil {
+				return port
+			}
+		}
+	}
+	return 0
 }

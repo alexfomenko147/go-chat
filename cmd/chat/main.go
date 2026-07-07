@@ -10,6 +10,7 @@ import (
 
 	"go-chat/internal/app"
 	"go-chat/internal/tui"
+	"go-chat/internal/tunnel"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -18,6 +19,7 @@ func main() {
 	configPath := flag.String("config", "", "path to config file")
 	versionFlag := flag.Bool("version", false, "print version")
 	serveFlag := flag.Bool("serve", false, "run as headless relay (no TUI)")
+	tunnelAddr := flag.String("tunnel", "", "run tunnel server on this address (e.g. :1234)")
 	flag.Parse()
 
 	if *versionFlag {
@@ -26,7 +28,7 @@ func main() {
 	}
 
 	if *serveFlag {
-		runRelay(*configPath)
+		runRelay(*configPath, *tunnelAddr)
 		return
 	}
 
@@ -54,14 +56,22 @@ func main() {
 	}
 }
 
-func runRelay(cfgPath string) {
+func runRelay(cfgPath, tunnelAddr string) {
 	fmt.Println("go-chat relay mode")
-	fmt.Println("Starting relay server...")
 
 	a, err := app.New(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if tunnelAddr != "" {
+		fmt.Printf("Starting tunnel server on %s\n", tunnelAddr)
+		go func() {
+			if err := tunnel.RunServer(tunnelAddr); err != nil {
+				fmt.Fprintf(os.Stderr, "Tunnel server error: %v\n", err)
+			}
+		}()
 	}
 
 	peerID := a.PeerID()
@@ -72,7 +82,10 @@ func runRelay(cfgPath string) {
 	}
 	fmt.Println()
 	fmt.Println("Peers connect with: /connect <address>")
-	fmt.Println("Or add to their relay_peers config.")
+	if tunnelAddr != "" {
+		fmt.Printf("Tunnel server listening on %s\n", tunnelAddr)
+		fmt.Println("Chat clients use: /tunnel <server-ip>:<port>")
+	}
 	fmt.Println("Press Ctrl+C to stop.")
 
 	ctx, cancel := context.WithCancel(context.Background())
