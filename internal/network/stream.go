@@ -68,13 +68,24 @@ func (h *StreamHandler) handleMessage(msg *Message, s network.Stream) {
 	case "sync_channel":
 		if h.node.Store != nil {
 			h.handleSyncChannel(msg, s)
+			h.notifyRefresh()
 		}
 	case "message":
 		if h.node.Store != nil {
 			h.handleSyncMessage(msg)
+			h.notifyRefresh()
 		}
 	default:
 		h.node.Logger.Debug("unknown message type: %s", msg.Type)
+	}
+}
+
+func (h *StreamHandler) notifyRefresh() {
+	if h.node.RefreshCh != nil {
+		select {
+		case h.node.RefreshCh <- struct{}{}:
+		default:
+		}
 	}
 }
 

@@ -27,16 +27,17 @@ import (
 const ProtocolID protocol.ID = "/go-chat/1.0.0"
 
 type Node struct {
-	Host   host.Host
-	Config *config.NetworkConfig
-	Logger *logging.Logger
-	Store  *storage.Store
-	Ctx    context.Context
-	Cancel context.CancelFunc
-	mdns   mdns.Service
+	Host      host.Host
+	Config    *config.NetworkConfig
+	Logger    *logging.Logger
+	Store     *storage.Store
+	RefreshCh chan struct{}
+	Ctx       context.Context
+	Cancel    context.CancelFunc
+	mdns      mdns.Service
 }
 
-func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Logger, store *storage.Store) (*Node, error) {
+func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Logger, store *storage.Store, refreshCh chan struct{}) (*Node, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var staticRelays []peer.AddrInfo
@@ -80,12 +81,13 @@ func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Log
 	}
 
 	node := &Node{
-		Host:   h,
-		Config: cfg,
-		Logger: log,
-		Store:  store,
-		Ctx:    ctx,
-		Cancel: cancel,
+		Host:      h,
+		Config:    cfg,
+		Logger:    log,
+		Store:     store,
+		RefreshCh: refreshCh,
+		Ctx:       ctx,
+		Cancel:    cancel,
 	}
 
 	h.SetStreamHandler(ProtocolID, node.handleStream)
@@ -297,6 +299,12 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 		case "message":
 			if n.Store != nil {
 				handler.handleSyncMessage(&msg)
+			}
+		}
+		if n.RefreshCh != nil {
+			select {
+			case n.RefreshCh <- struct{}{}:
+			default:
 			}
 		}
 	}

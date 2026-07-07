@@ -23,10 +23,11 @@ import (
 )
 
 type App struct {
-	Config  *config.Config
-	Logger  *logging.Logger
-	Store   *storage.Store
-	Node    *network.Node
+	Config    *config.Config
+	Logger    *logging.Logger
+	Store     *storage.Store
+	Node      *network.Node
+	RefreshCh chan struct{}
 
 	peerManager    *peermgr.Manager
 	orgManager     *organization.Manager
@@ -55,9 +56,10 @@ func New(cfgPath string) (*App, error) {
 	}
 
 	app := &App{
-		Config: cfg,
-		Logger: log,
-		Store:  store,
+		Config:    cfg,
+		Logger:    log,
+		Store:     store,
+		RefreshCh: make(chan struct{}, 64),
 	}
 
 	app.peerManager = peermgr.NewManager(store)
@@ -141,7 +143,7 @@ func (a *App) loadOrCreateIdentity() error {
 }
 
 func (a *App) startNetworking() error {
-	node, err := network.NewNode(a.libp2pKey, &a.Config.Network, a.Logger, a.Store)
+	node, err := network.NewNode(a.libp2pKey, &a.Config.Network, a.Logger, a.Store, a.RefreshCh)
 	if err != nil {
 		return fmt.Errorf("create network node: %w", err)
 	}

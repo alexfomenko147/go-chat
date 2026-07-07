@@ -72,12 +72,13 @@ func NewModel(a *app.App) *Model {
 }
 
 type tickMsg time.Time
+type refreshMsg struct{}
 
 func (m *Model) Init() tea.Cmd {
 	m.loadChannels()
 	m.loadPeers()
 	m.loadLogs()
-	return tea.Batch(textinput.Blink, m.nextTick())
+	return tea.Batch(textinput.Blink, m.nextTick(), m.waitForEvent())
 }
 
 func (m *Model) nextTick() tea.Cmd {
@@ -86,12 +87,23 @@ func (m *Model) nextTick() tea.Cmd {
 	})
 }
 
+func (m *Model) waitForEvent() tea.Cmd {
+	return func() tea.Msg {
+		<-m.app.RefreshCh
+		return refreshMsg{}
+	}
+}
+
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
-	case tickMsg:
+	case refreshMsg:
 		m.loadChannels()
+		m.loadPeers()
+		return m, m.waitForEvent()
+
+	case tickMsg:
 		m.loadPeers()
 		m.loadLogs()
 		return m, m.nextTick()
