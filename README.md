@@ -31,11 +31,25 @@
 
 ## Quick Start
 
-### Prerequisites
+### Install (one-liner)
+
+**macOS / Linux:**
+```bash
+curl -sfL https://raw.githubusercontent.com/Fenomen-Alex/go-chat/main/install.sh | sh
+# installed: /usr/local/bin/chat
+# run: chat
+```
+
+**Windows (PowerShell):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/Fenomen-Alex/go-chat/main/install.ps1 | iex
+```
+
+### Build from source
+
+#### Prerequisites
 
 - Go 1.24+ (`/usr/local/go/bin/go`)
-
-### Build
 
 ```bash
 go build -o chat ./cmd/chat
