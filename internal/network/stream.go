@@ -140,6 +140,13 @@ func (h *StreamHandler) sendFullState(s network.Stream) {
 		}
 	}
 
+	_ = h.SendMessage(s, &Message{
+		Type:      "sync_peer",
+		SenderID:  h.node.Host.ID().String(),
+		Content:   "me",
+		Timestamp: time.Now().UnixMilli(),
+	})
+
 	allMsgs, err := h.node.Store.ListAllMessages(50)
 	if err == nil {
 		for _, m := range allMsgs {
@@ -225,12 +232,26 @@ func (h *StreamHandler) handleSyncChannel(msg *Message, s network.Stream) {
 }
 
 func (h *StreamHandler) handleSyncPeer(msg *Message) {
-	if msg.SenderID == "" {
+	if msg.SenderID == "" || msg.Content == "" {
 		return
+	}
+	name := msg.Content
+	existing, _ := h.node.Store.GetPeerByDisplayName(name)
+	if existing != nil && existing.PeerID != msg.SenderID {
+		suffix := 1
+		for {
+			candidate := fmt.Sprintf("%s_%d", name, suffix)
+			dup, _ := h.node.Store.GetPeerByDisplayName(candidate)
+			if dup == nil {
+				name = candidate
+				break
+			}
+			suffix++
+		}
 	}
 	_ = h.node.Store.SavePeer(&storage.Peer{
 		PeerID:      msg.SenderID,
-		DisplayName: msg.Content,
+		DisplayName: name,
 		Status:      "online",
 		LastSeen:    time.Now().UTC(),
 	})

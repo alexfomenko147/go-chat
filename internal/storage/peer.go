@@ -67,6 +67,22 @@ func (s *Store) GetPeer(peerID string) (*Peer, error) {
 	return p, nil
 }
 
+func (s *Store) GetPeerByDisplayName(name string) (*Peer, error) {
+	p := &Peer{}
+	err := s.db.QueryRow(`SELECT id, peer_id, display_name, public_key, fingerprint, avatar_color, status, trusted, blocked, favorite, bio, timezone, notes, first_seen, last_seen, created_at, updated_at
+		FROM peers WHERE display_name=? LIMIT 1`, name).Scan(
+		&p.ID, &p.PeerID, &p.DisplayName, &p.PublicKey, &p.Fingerprint, &p.AvatarColor, &p.Status,
+		&p.Trusted, &p.Blocked, &p.Favorite, &p.Bio, &p.Timezone, &p.Notes,
+		&p.FirstSeen, &p.LastSeen, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get peer by display name: %w", err)
+	}
+	return p, nil
+}
+
 func (s *Store) ListPeers() ([]*Peer, error) {
 	rows, err := s.db.Query(`SELECT id, peer_id, display_name, public_key, fingerprint, avatar_color, status, trusted, blocked, favorite, bio, timezone, notes, first_seen, last_seen, created_at, updated_at FROM peers ORDER BY display_name`)
 	if err != nil {
