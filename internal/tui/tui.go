@@ -120,6 +120,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.inputMode {
 				m.inputMode = false
 				m.focus = focusChannels
+				m.loadPeers()
 			} else {
 				switch m.focus {
 				case focusChannels:
@@ -162,6 +163,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.handleInput()
 			}
 			m.inputMode = true
+			m.loadPeers()
 
 		case "?":
 			m.showHelp = !m.showHelp
@@ -191,6 +193,11 @@ func (m *Model) handleInput() tea.Cmd {
 
 	if text == "" {
 		return nil
+	}
+
+	if m.showHelp || m.showPeers {
+		m.showHelp = false
+		m.showPeers = false
 	}
 
 	if strings.HasPrefix(text, "/") {

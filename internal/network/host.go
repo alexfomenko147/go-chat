@@ -7,6 +7,7 @@ import (
 
 	"go-chat/internal/config"
 	"go-chat/internal/logging"
+	"go-chat/internal/storage"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -26,12 +27,13 @@ type Node struct {
 	Host   host.Host
 	Config *config.NetworkConfig
 	Logger *logging.Logger
+	Store  *storage.Store
 	Ctx    context.Context
 	Cancel context.CancelFunc
 	mdns   mdns.Service
 }
 
-func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Logger) (*Node, error) {
+func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Logger, store *storage.Store) (*Node, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var staticRelays []peer.AddrInfo
@@ -78,6 +80,7 @@ func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Log
 		Host:   h,
 		Config: cfg,
 		Logger: log,
+		Store:  store,
 		Ctx:    ctx,
 		Cancel: cancel,
 	}
@@ -191,6 +194,18 @@ func (n *Node) Close() error {
 		n.mdns.Close()
 	}
 	return n.Host.Close()
+}
+
+func (n *Node) Broadcast(msg *Message) {
+	for _, p := range n.Host.Network().Peers() {
+		s, err := n.Host.NewStream(n.Ctx, p, ProtocolID)
+		if err != nil {
+			n.Logger.Debug("broadcast to %s: %v", p.String(), err)
+			continue
+		}
+		NewStreamHandler(n).SendMessage(s, msg)
+		s.Close()
+	}
 }
 
 func (n *Node) ReconnectWithBackoff(ctx context.Context, pi peer.AddrInfo) error {

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"go-chat/internal/app"
@@ -20,6 +22,7 @@ func main() {
 	versionFlag := flag.Bool("version", false, "print version")
 	serveFlag := flag.Bool("serve", false, "run as headless relay (no TUI)")
 	tunnelAddr := flag.String("tunnel", "", "run tunnel server on this address (e.g. :1234)")
+	nameFlag := flag.String("name", "", "display name (will prompt if not set)")
 	flag.Parse()
 
 	if *versionFlag {
@@ -36,6 +39,21 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	id := a.Identity()
+	if *nameFlag != "" {
+		a.SetDisplayName(*nameFlag)
+	} else if strings.HasPrefix(id.DisplayName, "user-") {
+		fmt.Printf("Welcome! Enter your display name [%s]: ", id.DisplayName)
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			name := strings.TrimSpace(scanner.Text())
+			if name != "" {
+				a.SetDisplayName(name)
+			}
+		}
+		fmt.Println()
 	}
 
 	p := tea.NewProgram(
