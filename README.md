@@ -1,6 +1,6 @@
 # go-chat
 
-[![Release](https://github.com/anomalyco/go-chat/actions/workflows/release.yml/badge.svg)](https://github.com/anomalyco/go-chat/actions/workflows/release.yml)
+[![Release](https://github.com/Fenomen-Alex/go-chat/actions/workflows/release.yml/badge.svg)](https://github.com/Fenomen-Alex/go-chat/actions/workflows/release.yml)
 
 **Terminal P2P Chat** — A serverless, encrypted, peer-to-peer messaging platform that runs entirely in your terminal.
 
@@ -392,7 +392,7 @@ GOOS=windows GOARCH=arm64 go build -ldflags="-s -w" -o build/chat-windows-arm64.
 
 ### Download Pre-built Binaries
 
-Pre-built binaries for all platforms are available from the [Releases](https://github.com/anomalyco/go-chat/releases) page:
+Pre-built binaries for all platforms are available from the [Releases](https://github.com/Fenomen-Alex/go-chat/releases) page:
 
 | Platform | Architecture | Binary |
 |----------|-------------|--------|

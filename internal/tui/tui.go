@@ -65,6 +65,10 @@ func NewModel(a *app.App) *Model {
 }
 
 func (m *Model) Init() tea.Cmd {
+	m.loadOrgs()
+	if len(m.orgList) > 0 {
+		m.loadChannels()
+	}
 	return textinput.Blink
 }
 
