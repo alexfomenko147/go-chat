@@ -31,25 +31,37 @@
 
 ## Quick Start
 
-### Install (one-liner)
+### macOS
 
-**macOS / Linux:**
+1. Go to [Releases](https://github.com/Fenomen-Alex/go-chat/releases)
+2. Download `chat-darwin-amd64.zip` (Intel) or `chat-darwin-arm64.zip` (Apple Silicon)
+3. Double-click the zip to extract — you'll see `chat.app`
+4. **Right-click** `chat.app` → **Open** (first time only — macOS security)
+5. The chat opens in Terminal — ready to use
+
+### Windows
+
+1. Go to [Releases](https://github.com/Fenomen-Alex/go-chat/releases)
+2. Download `chat-windows-amd64.exe.zip`
+3. Extract and double-click `chat-windows-amd64.exe`
+
+### Linux
+
+1. Go to [Releases](https://github.com/Fenomen-Alex/go-chat/releases)
+2. Download `chat-linux-amd64.tar.gz` or `chat-linux-arm64.tar.gz`
+3. Extract and run `./chat` in terminal
+
+### Terminal one-liner (any OS)
+
 ```bash
 curl -sfL https://raw.githubusercontent.com/Fenomen-Alex/go-chat/main/install.sh | sh
-# installed: /usr/local/bin/chat
-# run: chat
-```
-
-**Windows (PowerShell):**
-```powershell
-iwr -useb https://raw.githubusercontent.com/Fenomen-Alex/go-chat/main/install.ps1 | iex
 ```
 
 ### Build from source
 
 #### Prerequisites
 
-- Go 1.24+ (`/usr/local/go/bin/go`)
+- Go 1.24+
 
 ```bash
 go build -o chat ./cmd/chat

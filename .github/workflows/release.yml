@@ -40,21 +40,27 @@ jobs:
           - os: linux
             arch: amd64
             ext: ""
+            bundle: ""
           - os: linux
             arch: arm64
             ext: ""
+            bundle: ""
           - os: darwin
             arch: amd64
             ext: ""
+            bundle: "app"
           - os: darwin
             arch: arm64
             ext: ""
+            bundle: "app"
           - os: windows
             arch: amd64
             ext: ".exe"
+            bundle: ""
           - os: windows
             arch: arm64
             ext: ".exe"
+            bundle: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -70,8 +76,43 @@ jobs:
           BINARY="chat-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
           go build -ldflags="-s -w" -o "build/$BINARY" ./cmd/chat
 
-      - name: Archive (Unix)
-        if: matrix.os != 'windows'
+      - name: Bundle macOS .app
+        if: matrix.bundle == 'app'
+        run: |
+          BINARY="chat-${{ matrix.os }}-${{ matrix.arch }}"
+          APP_DIR="build/chat.app/Contents/MacOS"
+          mkdir -p "$APP_DIR"
+          cp "build/$BINARY" "$APP_DIR/chat"
+          cat > build/chat.app/Contents/Info.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>chat</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.go-chat.app</string>
+            <key>CFBundleName</key>
+            <string>go-chat</string>
+            <key>CFBundleVersion</key>
+            <string>${{ github.ref_name }}</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${{ github.ref_name }}</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Archive (macOS .app)
+        if: matrix.bundle == 'app'
+        run: |
+          cd build
+          BINARY="chat-${{ matrix.os }}-${{ matrix.arch }}"
+          zip -r "${BINARY}.zip" "chat.app"
+
+      - name: Archive (Unix binary)
+        if: matrix.os != 'windows' && matrix.bundle != 'app'
         run: |
           cd build
           BINARY="chat-${{ matrix.os }}-${{ matrix.arch }}"
