@@ -295,7 +295,27 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 		if len(allAddrs) > 0 {
 			m.addStatus(fmt.Sprintf("Share: /connect %s", allAddrs[0]))
 		}
-		m.addStatus("Peer can also find you via mDNS (LAN) or DHT (internet)")
+		m.addStatus("Peer can find you via mDNS (LAN), DHT (internet), or a relay")
+
+	case "/relay":
+		if len(parts) < 2 {
+			m.addStatus("Usage: /relay <multiaddr>  or  /relay connect <addr>")
+			m.addStatus("Set relay_peers in config.yaml to auto-connect on startup")
+			return nil
+		}
+		if parts[1] == "connect" && len(parts) >= 3 {
+			if err := m.app.Connect(parts[2]); err != nil {
+				m.addStatus(fmt.Sprintf("Relay connect error: %v", err))
+				return nil
+			}
+			m.addStatus(fmt.Sprintf("Connected to relay: %s", parts[2]))
+		} else {
+			if err := m.app.Connect(parts[1]); err != nil {
+				m.addStatus(fmt.Sprintf("Relay connect error: %v", err))
+				return nil
+			}
+			m.addStatus(fmt.Sprintf("Connected to relay: %s", parts[1]))
+		}
 
 	case "/profile":
 		id := m.app.Identity()
@@ -508,7 +528,8 @@ func (m Model) helpView() string {
 	return `Commands:
   /help             Show this help
   /myaddr           Show your shareable multiaddress
-  /connect <addr>   Connect to a peer
+  /connect <addr>   Connect to a peer directly
+  /relay <addr>     Connect via a relay peer
   /disconnect       Disconnect all peers
   /peers            List known peers
   /org create       Create an organization
@@ -516,6 +537,9 @@ func (m Model) helpView() string {
   /dm <peer>        Open direct message
   /profile          Show your profile
   /quit             Quit
+
+No router config needed:
+  /relay <relay_addr>  or  set relay_peers in config.yaml
 
 Keys:
   Tab        Toggle input/navigation mode

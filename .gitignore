@@ -1,7 +1,11 @@
 # Binaries
-go-chat
-chat
+/go-chat
+/chat
+chat-linux-*
+chat-darwin-*
+chat-windows-*
 *.exe
+*.dll
 *.dll
 *.so
 *.dylib

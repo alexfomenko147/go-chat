@@ -72,7 +72,9 @@ network:
   enable_quic: true
   enable_tcp: true
   bootstrap_peers: []          # multiaddrs for bootstrap
-  relay_peers: []
+  relay_peers: []              # multiaddrs /ip4/.../tcp/.../p2p/...
+  # relay_peers:
+  #   - /ip4/1.2.3.4/tcp/4001/p2p/12D3KooW...
 
 database:
   path: chat.db
@@ -104,9 +106,13 @@ security:
 Override with CLI flags:
 
 ```bash
+./chat                           # Launch TUI
+./chat --serve                   # Headless relay mode (no TUI)
 ./chat --config /path/to/config.yaml
 ./chat --version
 ```
+
+> **Public relay:** Run `chat --serve` on any public server to create a relay that your peers can use without port forwarding.
 
 ## Usage
 
@@ -144,7 +150,8 @@ Override with CLI flags:
 |---------|-------------|
 | `/help` | Show help |
 | `/myaddr` | Show your shareable multiaddress |
-| `/connect <multiaddr>` | Connect to a peer manually |
+| `/connect <multiaddr>` | Connect to a peer directly |
+| `/relay <multiaddr>` | Connect via a relay peer (no port forwarding) |
 | `/disconnect` | Disconnect all peers |
 | `/peers` | List known peers |
 | `/org create <name>` | Create an organization |
@@ -171,44 +178,73 @@ To share your address with a remote peer, run `/myaddr` inside the chat. You'll 
 Share: /connect /ip4/<public_ip>/tcp/43987/p2p/12D3KooW...
 ```
 
-The peer on the other end runs:
+### Connect Across the Internet (no router config)
+
+#### Option 1: Use a relay peer (recommended — zero config)
+
+A **relay** is a publicly accessible go-chat instance that forwards traffic between peers. Neither side needs port forwarding.
+
+**Step 1: Find a relay**
+
+Either run your own on a public server (`chat --serve`) or use a public relay shared by the community.
+
+**Step 2: Connect to the relay**
+
+Inside go-chat, type:
 
 ```
-/connect /ip4/<your_public_ip>/tcp/<port>/p2p/<peer_id>
+/relay /ip4/<relay_ip>/tcp/<relay_port>/p2p/<relay_peer_id>
 ```
 
-**Notes for internet connectivity:**
+Or set `relay_peers` in `config.yaml` to auto-connect on every launch:
 
-- Get your public IP from [whatismyip.com](https://whatismyip.com) or your router's status page.
-- You need **port forwarding** or **UPnP** for incoming connections.
+```yaml
+network:
+  relay_peers:
+    - /ip4/<relay_ip>/tcp/<relay_port>/p2p/<relay_peer_id>
+```
 
-#### Port Forwarding Setup
+**Step 3: Share your relay address**
 
-1. Run `go-chat` and type `/myaddr` to see your port:
-   ```
-   /ip4/192.168.1.42/tcp/43987/p2p/12D3KooW...
-   ```
-   The port is `43987` in this example.
+Run `/myaddr`. You'll see a relay address like:
 
-2. Log into your router's admin panel (usually `192.168.1.1` or `192.168.0.1`).
+```
+/ip4/<relay_ip>/tcp/<relay_port>/p2p/<relay_peer_id>/p2p-circuit/p2p/<your_peer_id>
+```
 
-3. Find **Port Forwarding** (may be under Advanced > NAT > Virtual Server).
+The remote peer connects to the same relay and you can communicate directly through it.
 
-4. Create a rule:
-   - **External Port**: `43987` (TCP)
-   - **Internal IP**: `192.168.1.42` (your local machine)
-   - **Internal Port**: `43987` (TCP)
+> **How it works:** libp2p's AutoRelay automatically detects when a direct connection isn't possible and routes through the relay. Both peers only need *outbound* connections — no router config required.
 
-5. If your router supports **UPnP**, go-chat attempts to map the port automatically (libp2p's `NATPortMap()` is enabled by default). Verify UPnP is enabled in your router settings.
+---
 
-6. Share your **public IP + port + peer ID** with the remote peer. They connect with:
-   ```
-   /connect /ip4/<your_public_ip>/tcp/<port>/p2p/<peer_id>
-   ```
+#### Option 2: Run your own relay on a public server
 
-7. If a direct connection fails, libp2p automatically falls back to **hole punching** and **relay**.
+If you have access to any public server (free Oracle Cloud, AWS free tier, $5 VPS, etc.):
 
-> **Tip:** For a static setup, set a fixed port in `config.yaml` (`network.port: 43987`) and forward that port.
+```bash
+# On the server (no TUI needed)
+chat --serve
+
+# You'll see:
+# Relay Peer ID: 12D3KooW...
+#   /ip4/<server_ip>/tcp/<port>/p2p/12D3KooW...
+```
+
+Share the printed address with your peers. They connect with `/relay <address>`.
+
+---
+
+#### Option 3: Direct connection with port forwarding
+
+If you can configure your router, run `/myaddr` and share the address. Forwards the port in your router:
+
+1. Run `/myaddr` to see your port
+2. In your router: forward that TCP port to your machine
+3. Share your public IP + port + peer ID
+4. Remote peer connects with `/connect <address>`
+
+---
 
 #### Bootstrap
 

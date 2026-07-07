@@ -71,6 +71,19 @@ func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Log
 		go node.startRelay()
 	}
 
+	for _, relayAddr := range cfg.RelayPeers {
+		if relayAddr == "" {
+			continue
+		}
+		go func(addr string) {
+			if err := node.Connect(ctx, addr); err != nil {
+				log.Warn("relay connect %s: %v", addr, err)
+				return
+			}
+			log.Info("connected to relay: %s", addr)
+		}(relayAddr)
+	}
+
 	if cfg.EnableMDNS {
 		node.startMDNS()
 	}
