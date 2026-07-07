@@ -65,7 +65,7 @@ func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Log
 	}
 
 	if len(staticRelays) > 0 {
-		opts = append(opts, libp2p.EnableAutoRelayWithStaticRelays(staticRelays...))
+		opts = append(opts, libp2p.EnableAutoRelayWithStaticRelays(staticRelays))
 	}
 
 	h, err := libp2p.New(opts...)
