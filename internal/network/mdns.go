@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"time"
 
 	"go-chat/internal/storage"
@@ -18,7 +19,9 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	}
 	m.node.Logger.Info("mDNS discovered peer: %s", pi.ID.String())
 
-	ctx := m.node.Ctx
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	if err := m.node.Host.Connect(ctx, pi); err != nil {
 		m.node.Logger.Debug("mDNS connect to %s: %v", pi.ID.String(), err)
 		return
@@ -26,18 +29,27 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	m.node.Logger.Info("mDNS connected to: %s", pi.ID.String())
 
 	if m.node.Store != nil {
-		existing, _ := m.node.Store.GetPeer(pi.ID.String())
+		existing, err := m.node.Store.GetPeer(pi.ID.String())
+		if err != nil {
+			m.node.Logger.Warn("mDNS get peer: %v", err)
+		}
 		if existing == nil {
-			_ = m.node.Store.SavePeer(&storage.Peer{
+			if err := m.node.Store.SavePeer(&storage.Peer{
 				PeerID:      pi.ID.String(),
 				DisplayName: pi.ID.String(),
 				Status:      "online",
 				LastSeen:    time.Now().UTC(),
-			})
+			}); err != nil {
+				m.node.Logger.Warn("mDNS save peer: %v", err)
+			}
 		} else {
-			_ = m.node.Store.UpdatePeerStatus(pi.ID.String(), "online")
+			if err := m.node.Store.UpdatePeerStatus(pi.ID.String(), "online"); err != nil {
+				m.node.Logger.Warn("mDNS update peer status: %v", err)
+			}
 		}
 	}
 
-	_ = m.node.SyncWithPeer(ctx, pi.ID)
+	if err := m.node.SyncWithPeer(ctx, pi.ID); err != nil {
+		m.node.Logger.Warn("mDNS sync with %s: %v", pi.ID.String(), err)
+	}
 }

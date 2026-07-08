@@ -657,7 +657,7 @@ func (m *Model) loadMessages() {
 		return
 	}
 	channelID := m.channelList[m.selectedChan].ChannelID
-	msgs, err := m.app.ListMessages(channelID, 100, 0)
+	msgs, err := m.app.ListMessages(channelID, 500, 0)
 	if err != nil {
 		m.addStatus(fmt.Sprintf("Error loading messages: %v", err))
 		return

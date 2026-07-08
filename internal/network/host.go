@@ -329,7 +329,7 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 	if n.Store != nil {
 		handler.sendSyncState(s)
 
-		msgs, err := n.Store.ListAllMessages(50)
+		msgs, err := n.Store.ListAllMessages(10000)
 		if err != nil {
 			n.Logger.Warn("list all messages for sync: %v", err)
 		}
@@ -338,12 +338,13 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 				continue
 			}
 			handler.SendMessage(s, &Message{
-				Type:      "message",
-				SenderID:  msg.SenderPeerID,
-				ChannelID: msg.ChannelID,
-				MessageID: msg.MessageID,
-				Content:   msg.Content,
-				Timestamp: msg.CreatedAt.UnixMilli(),
+				Type:        "message",
+				SenderID:    msg.SenderPeerID,
+				ChannelID:   msg.ChannelID,
+				MessageID:   msg.MessageID,
+				Content:     msg.Content,
+				ContentType: msg.ContentType,
+				Timestamp:   msg.CreatedAt.UnixMilli(),
 			})
 		}
 	}

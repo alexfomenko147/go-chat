@@ -76,8 +76,8 @@ func (h *StreamHandler) handleSyncRequest(s network.Stream, peerID string, r *bu
 		data, err := r.ReadBytes('\n')
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				h.node.Logger.Debug("sync read timeout from %s, assuming done", peerID)
-				break
+				h.node.Logger.Debug("sync read timeout from %s, peer may be gone", peerID)
+				return
 			}
 			h.node.Logger.Debug("sync read error from %s: %v", peerID, err)
 			return
@@ -92,13 +92,12 @@ func (h *StreamHandler) handleSyncRequest(s network.Stream, peerID string, r *bu
 		h.DecryptMessage(&msg, peerID)
 
 		if msg.Type == "sync_complete" {
-			break
+			h.sendFullState(s)
+			return
 		}
 
 		h.handleMessage(&msg, s)
 	}
-
-	h.sendFullState(s)
 }
 
 func (h *StreamHandler) handleMessage(msg *Message, s network.Stream) {
@@ -142,7 +141,7 @@ func (h *StreamHandler) notifyRefresh() {
 func (h *StreamHandler) sendFullState(s network.Stream) {
 	h.sendSyncState(s)
 
-	allMsgs, err := h.node.Store.ListAllMessages(50)
+	allMsgs, err := h.node.Store.ListAllMessages(10000)
 	if err == nil {
 		remotePeerID := h.remotePeerID(s)
 		for _, m := range allMsgs {
@@ -150,12 +149,13 @@ func (h *StreamHandler) sendFullState(s network.Stream) {
 				continue
 			}
 			if err := h.SendMessage(s, &Message{
-				Type:      "message",
-				SenderID:  m.SenderPeerID,
-				ChannelID: m.ChannelID,
-				MessageID: m.MessageID,
-				Content:   m.Content,
-				Timestamp: m.CreatedAt.UnixMilli(),
+				Type:        "message",
+				SenderID:    m.SenderPeerID,
+				ChannelID:   m.ChannelID,
+				MessageID:   m.MessageID,
+				Content:     m.Content,
+				ContentType: m.ContentType,
+				Timestamp:   m.CreatedAt.UnixMilli(),
 			}); err != nil {
 				h.node.Logger.Warn("send message during full state sync: %v", err)
 			}

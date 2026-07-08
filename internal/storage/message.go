@@ -31,7 +31,6 @@ func (s *Store) SaveMessage(msg *Message) error {
 			edited=excluded.edited,
 			deleted=excluded.deleted,
 			pinned=excluded.pinned,
-			delivery_state=excluded.delivery_state,
 			updated_at=excluded.updated_at`,
 		msg.MessageID, msg.ChannelID, msg.SenderPeerID, msg.Content, msg.ContentType, msg.Encrypted,
 		msg.ReplyTo, msg.Edited, msg.Deleted, msg.Pinned, msg.DeliveryState, msg.CreatedAt, msg.UpdatedAt)
@@ -59,7 +58,7 @@ func (s *Store) GetMessage(messageID string) (*Message, error) {
 
 func (s *Store) ListMessages(channelID string, limit, offset int) ([]*Message, error) {
 	if limit <= 0 {
-		limit = 100
+		limit = 500
 	}
 	rows, err := s.db.Query(`SELECT id, message_id, channel_id, sender_peer_id, content, content_type, encrypted, reply_to, edited, deleted, pinned, delivery_state, created_at, updated_at
 		FROM messages WHERE channel_id=? AND deleted=0 ORDER BY created_at DESC LIMIT ? OFFSET ?`,
@@ -84,10 +83,10 @@ func (s *Store) ListMessages(channelID string, limit, offset int) ([]*Message, e
 
 func (s *Store) ListAllMessages(limit int) ([]*Message, error) {
 	if limit <= 0 {
-		limit = 100
+		limit = 10000
 	}
 	rows, err := s.db.Query(`SELECT id, message_id, channel_id, sender_peer_id, content, content_type, encrypted, reply_to, edited, deleted, pinned, delivery_state, created_at, updated_at
-		FROM messages WHERE deleted=0 ORDER BY created_at DESC LIMIT ?`, limit)
+		FROM messages WHERE deleted=0 ORDER BY created_at ASC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list all messages: %w", err)
 	}
