@@ -389,6 +389,10 @@ func (a *App) ListMessages(channelID string, limit, offset int) ([]*storage.Mess
 	return a.Store.ListMessages(channelID, limit, offset)
 }
 
+func (a *App) CountChannelMessages(channelID string) (int, error) {
+	return a.Store.CountChannelMessages(channelID)
+}
+
 func (a *App) OpenDM(peerID string) (string, error) {
 	myID := a.PeerID()
 	channelID := fmt.Sprintf("dm_%s_%s", myID, peerID)

@@ -106,6 +106,15 @@ func (s *Store) ListAllMessages(limit int) ([]*Message, error) {
 	return msgs, rows.Err()
 }
 
+func (s *Store) CountChannelMessages(channelID string) (int, error) {
+	var cnt int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE channel_id=? AND deleted=0`, channelID).Scan(&cnt)
+	if err != nil {
+		return 0, fmt.Errorf("count channel messages: %w", err)
+	}
+	return cnt, nil
+}
+
 func (s *Store) DeleteMessage(messageID string) error {
 	_, err := s.db.Exec(`UPDATE messages SET deleted=1, updated_at=? WHERE message_id=?`,
 		time.Now().UTC(), messageID)

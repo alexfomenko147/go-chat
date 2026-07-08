@@ -20,10 +20,11 @@ import (
 )
 
 type MessageItem struct {
-	Sender       string
-	SenderPeerID string
-	Content      string
-	Timestamp    string
+	Sender        string
+	SenderPeerID  string
+	Content       string
+	Timestamp     string
+	DeliveryState string
 }
 
 type Model struct {
@@ -54,6 +55,11 @@ type Model struct {
 	pendingConnect string
 	needsName      bool
 	namePromptErr  string
+
+	loading    bool
+	loadingMsg string
+	unread     map[string]int
+	lastMsgCnt map[string]int
 }
 
 func NewModel(a *app.App) *Model {
@@ -71,6 +77,8 @@ func NewModel(a *app.App) *Model {
 		inputMode:  true,
 		needsName:  a.IsDefaultName(),
 		statusText: fmt.Sprintf("PeerID: %s | /myaddr to see shareable address", a.PeerID()),
+		unread:     make(map[string]int),
+		lastMsgCnt: make(map[string]int),
 	}
 
 	return m
@@ -105,6 +113,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case refreshMsg:
+		m.updateUnread()
 		m.loadChannels()
 		m.loadPeers()
 		m.loadLogs()
@@ -138,6 +147,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case statusMsg:
+		m.loading = false
 		m.addStatus(string(msg))
 
 	case firstLaunchMsg:
@@ -182,6 +192,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedChan--
 				m.loadMessages()
 			}
+
+		case "pgup":
+			m.chatView.HalfViewUp()
+		case "pgdown":
+			m.chatView.HalfViewDown()
 
 		case "down":
 			if m.inputMode {
@@ -282,10 +297,11 @@ func (m *Model) handleInput() tea.Cmd {
 	}
 
 	msg := MessageItem{
-		Sender:       m.app.Identity().DisplayName,
-		SenderPeerID: m.app.PeerID(),
-		Content:      text,
-		Timestamp:    "now",
+		Sender:        m.app.Identity().DisplayName,
+		SenderPeerID:  m.app.PeerID(),
+		Content:       text,
+		Timestamp:     "now",
+		DeliveryState: "sent",
 	}
 	m.messages = append(m.messages, msg)
 	m.chatView.SetContent(m.renderMessages())
@@ -470,7 +486,8 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 			return nil
 		}
 
-		m.addStatus(fmt.Sprintf("Connecting to tunnel %s ...", serverAddr))
+		m.loading = true
+		m.loadingMsg = "Setting up tunnel..."
 
 		return func() tea.Msg {
 			publicPort, err := tunnel.RunClient(serverAddr, localPort)
@@ -482,7 +499,8 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 		}
 
 	case "/publicip":
-		m.addStatus("Looking up public IP...")
+		m.loading = true
+		m.loadingMsg = "Looking up public IP..."
 		return func() tea.Msg {
 			ip, err := fetchPublicIP()
 			if err != nil {
@@ -568,6 +586,27 @@ func (m *Model) addStatus(msg string) {
 	}
 }
 
+func (m *Model) updateUnread() {
+	if len(m.channelList) == 0 {
+		return
+	}
+	curID := m.channelList[m.selectedChan].ChannelID
+	for _, ch := range m.channelList {
+		if ch.ChannelID == curID {
+			continue
+		}
+		cnt, err := m.app.CountChannelMessages(ch.ChannelID)
+		if err != nil {
+			continue
+		}
+		prev := m.lastMsgCnt[ch.ChannelID]
+		if cnt > prev {
+			m.unread[ch.ChannelID] += cnt - prev
+		}
+		m.lastMsgCnt[ch.ChannelID] = cnt
+	}
+}
+
 func (m *Model) loadLogs() {
 	entries := m.app.Logger.UIMessages()
 	m.logEntries = nil
@@ -624,15 +663,18 @@ func (m *Model) loadMessages() {
 		return
 	}
 
+	m.unread[channelID] = 0
+	m.lastMsgCnt[channelID] = len(msgs)
 	m.messages = nil
 	for i := len(msgs) - 1; i >= 0; i-- {
 		msg := msgs[i]
 		sender := m.app.GetPeerDisplayName(msg.SenderPeerID)
 		m.messages = append(m.messages, MessageItem{
-			Sender:       sender,
-			SenderPeerID: msg.SenderPeerID,
-			Content:      msg.Content,
-			Timestamp:    msg.CreatedAt.Format("15:04"),
+			Sender:        sender,
+			SenderPeerID:  msg.SenderPeerID,
+			Content:       msg.Content,
+			Timestamp:     msg.CreatedAt.Format("15:04"),
+			DeliveryState: msg.DeliveryState,
 		})
 	}
 	m.chatView.SetContent(m.renderMessages())
@@ -722,13 +764,18 @@ func (m *Model) renderChannelPanel() string {
 			prefix = "@ "
 		}
 		name := ch.Name
-		if utf8.RuneCountInString(name) > 28 {
-			name = string([]rune(name)[:28])
+		if utf8.RuneCountInString(name) > 24 {
+			name = string([]rune(name)[:24])
 		}
+		unreadStr := ""
+		if cnt := m.unread[ch.ChannelID]; cnt > 0 && i != m.selectedChan {
+			unreadStr = fmt.Sprintf(" (%d)", cnt)
+		}
+		disp := "  " + prefix + name + unreadStr
 		if i == m.selectedChan {
-			items = append(items, SelectedChannelStyle.Render("  "+prefix+name+"  "))
+			items = append(items, SelectedChannelStyle.Render(disp))
 		} else {
-			items = append(items, ChannelItemStyle.Render("  "+prefix+name))
+			items = append(items, ChannelItemStyle.Render(disp))
 		}
 	}
 
@@ -744,14 +791,31 @@ func (m *Model) renderLogPanel() string {
 	}
 
 	var lines []string
-	start := 0
-	if len(m.logEntries) > 8 {
-		start = len(m.logEntries) - 8
+	// show last status entries first
+	statusStart := 0
+	if len(m.statusLog) > 3 {
+		statusStart = len(m.statusLog) - 3
 	}
-	for i := start; i < len(m.logEntries); i++ {
-		entry := m.logEntries[i]
+	for i := statusStart; i < len(m.statusLog); i++ {
+		entry := m.statusLog[i]
 		if utf8.RuneCountInString(entry) > 60 {
 			entry = string([]rune(entry)[:60])
+		}
+		lines = append(lines, DimmedStyle.Render("∙ "+entry))
+	}
+
+	maxLogLines := 8 - (len(m.statusLog) - statusStart)
+	if maxLogLines < 0 {
+		maxLogLines = 0
+	}
+	logStart := 0
+	if len(m.logEntries) > maxLogLines {
+		logStart = len(m.logEntries) - maxLogLines
+	}
+	for i := logStart; i < len(m.logEntries); i++ {
+		entry := m.logEntries[i]
+		if utf8.RuneCountInString(entry) > 55 {
+			entry = string([]rune(entry)[:55])
 		}
 		lines = append(lines, DimmedStyle.Render(entry))
 	}
@@ -772,44 +836,90 @@ func (m *Model) renderChatPanel() string {
 	chatContent := header + "\n" + messages
 	m.chatView.SetContent(chatContent)
 
-	return ChatPanelStyle.Render(m.chatView.View())
+	panel := ChatPanelStyle.Render(m.chatView.View())
+
+	if m.showHelp || m.showPeers {
+		pw := m.chatView.Width - 4
+		ph := m.chatView.Height - 4
+		if pw < 50 {
+			pw = 50
+		}
+		if ph < 20 {
+			ph = 20
+		}
+		overlayContent := m.helpView()
+		if m.showPeers {
+			overlayContent = m.peersView()
+		}
+		overlay := lipgloss.NewStyle().
+			Width(pw).
+			Height(ph).
+			Padding(1, 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#57F287")).
+			Render(overlayContent)
+		panel = lipgloss.Place(m.chatView.Width+2, m.chatView.Height+2,
+			lipgloss.Center, lipgloss.Center, overlay)
+	}
+
+	return panel
 }
 
 func (m *Model) renderMessages() string {
-	if m.showHelp {
-		return m.helpView()
-	}
-	if m.showPeers {
-		return m.peersView()
+	if m.showHelp || m.showPeers {
+		return ""
 	}
 	if len(m.messages) == 0 {
 		return DimmedStyle.Render("  No messages yet. Start typing!")
 	}
 
-	var items []string
 	chatWidth := m.chatView.Width - 4
-	if chatWidth < 10 {
+	if chatWidth < 30 {
 		chatWidth = 40
 	}
+
+	var items []string
 	for _, msg := range m.messages {
 		senderStyle := lipgloss.NewStyle().Bold(true).Foreground(senderColor(msg.SenderPeerID))
 		if msg.SenderPeerID == m.app.PeerID() {
 			senderStyle = SelfSenderStyle
 		}
-		content := msg.Content
-		maxRunes := chatWidth - 20
-		if maxRunes < 10 {
-			maxRunes = 10
+
+		deliveryMark := ""
+		if msg.SenderPeerID == m.app.PeerID() {
+			switch msg.DeliveryState {
+			case "sent":
+				deliveryMark = "✓"
+			case "received":
+				deliveryMark = "✓✓"
+			default:
+				deliveryMark = "○"
+			}
 		}
-		if utf8.RuneCountInString(content) > maxRunes {
-			content = string([]rune(content)[:maxRunes-3]) + "..."
+
+		wrapWidth := chatWidth - 20
+		if wrapWidth < 20 {
+			wrapWidth = 20
 		}
-		line := fmt.Sprintf("%s %s %s",
-			TimeStyle.Render(msg.Timestamp),
-			senderStyle.Render(msg.Sender),
-			content,
-		)
-		items = append(items, line)
+		wrapped := lipgloss.NewStyle().Width(wrapWidth).Render(msg.Content)
+		contentLines := strings.Split(wrapped, "\n")
+		for j, cl := range contentLines {
+			if j == 0 {
+				line := fmt.Sprintf("%s %s %s%s",
+					TimeStyle.Render(msg.Timestamp),
+					senderStyle.Render(msg.Sender),
+					deliveryMark,
+					cl,
+				)
+				items = append(items, line)
+			} else {
+				items = append(items, fmt.Sprintf("%s %s  %s",
+					TimeStyle.Render(""),
+					strings.Repeat(" ", lipgloss.Width(senderStyle.Render(msg.Sender))),
+					cl,
+				))
+			}
+		}
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, items...)
@@ -829,6 +939,9 @@ func (m *Model) renderStatusBar() string {
 	statusText := m.statusText
 	if ctx != "" {
 		statusText = ctx + " │ " + m.statusText
+	}
+	if m.loading {
+		statusText = "⟳ " + m.loadingMsg
 	}
 
 	left := StatusStyle.Render(statusText)
