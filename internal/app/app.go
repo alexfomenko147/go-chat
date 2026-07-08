@@ -51,7 +51,7 @@ func New(cfgPath string) (*App, error) {
 		return nil, fmt.Errorf("create logger: %w", err)
 	}
 
-	store, err := storage.New(cfg.Database)
+	store, err := storage.New(cfg.Database, log)
 	if err != nil {
 		return nil, fmt.Errorf("create storage: %w", err)
 	}
@@ -118,7 +118,11 @@ func (a *App) loadOrCreateIdentity() error {
 
 	displayName := a.Config.Identity.DisplayName
 	if displayName == "" {
-		hostname, _ := os.Hostname()
+		hostname, err := os.Hostname()
+		if err != nil {
+			a.Logger.Warn("get hostname: %v", err)
+			hostname = "unknown"
+		}
 		displayName = fmt.Sprintf("user-%s", hostname)
 	}
 
@@ -188,7 +192,9 @@ func (a *App) AllAddrs() []string {
 func (a *App) SetDisplayName(name string) {
 	a.identity.DisplayName = name
 	a.identity.UpdatedAt = time.Now().UTC()
-	_ = a.Store.SaveIdentity(a.identity)
+	if err := a.Store.SaveIdentity(a.identity); err != nil {
+		a.Logger.Warn("save identity: %v", err)
+	}
 
 	if a.Node != nil {
 		a.Node.Broadcast(&network.Message{
@@ -267,7 +273,9 @@ func (a *App) Connect(addrStr string) error {
 	if err != nil {
 		return err
 	}
-	_ = a.Node.SyncWithPeer(context.Background(), peerID)
+	if err := a.Node.SyncWithPeer(context.Background(), peerID); err != nil {
+		a.Logger.Warn("sync with peer: %v", err)
+	}
 	return nil
 }
 
@@ -276,7 +284,9 @@ func (a *App) DisconnectAll() {
 		return
 	}
 	for _, p := range a.Node.Host.Network().Peers() {
-		_ = a.Node.Disconnect(p)
+		if err := a.Node.Disconnect(p); err != nil {
+			a.Logger.Warn("disconnect: %v", err)
+		}
 	}
 }
 
@@ -296,11 +306,15 @@ func (a *App) ListPeers() ([]*storage.Peer, error) {
 			if connected[p.PeerID] {
 				if p.Status != "online" {
 					p.Status = "online"
-					_ = a.Store.UpdatePeerStatus(p.PeerID, "online")
+				if err := a.Store.UpdatePeerStatus(p.PeerID, "online"); err != nil {
+					a.Logger.Warn("update peer status online: %v", err)
 				}
-			} else if p.Status == "online" {
-				p.Status = "offline"
-				_ = a.Store.UpdatePeerStatus(p.PeerID, "offline")
+			}
+		} else if p.Status == "online" {
+			p.Status = "offline"
+			if err := a.Store.UpdatePeerStatus(p.PeerID, "offline"); err != nil {
+				a.Logger.Warn("update peer status offline: %v", err)
+			}
 			}
 		}
 
@@ -409,20 +423,27 @@ func (a *App) IsDefaultName() bool {
 }
 
 func (a *App) SaveConnection(addr string) {
-	conns, _ := a.Store.ListConnections()
+	conns, err := a.Store.ListConnections()
+	if err != nil {
+		a.Logger.Warn("list connections: %v", err)
+	}
 	for _, c := range conns {
 		if c.Address == addr {
 			c.LastConnectedAt = time.Now().UTC()
-			_ = a.Store.SaveConnection(c)
+			if err := a.Store.SaveConnection(c); err != nil {
+				a.Logger.Warn("save connection: %v", err)
+			}
 			return
 		}
 	}
 	now := time.Now().UTC()
-	_ = a.Store.SaveConnection(&storage.Connection{
+	if err := a.Store.SaveConnection(&storage.Connection{
 		Address:         addr,
 		LastConnectedAt: now,
 		CreatedAt:       now,
-	})
+	}); err != nil {
+		a.Logger.Warn("save connection: %v", err)
+	}
 }
 
 func (a *App) ListConnections() ([]*storage.Connection, error) {

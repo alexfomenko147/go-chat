@@ -29,10 +29,6 @@ func (m *Manager) CreateOrganization(name, description, ownerPeerID string) (*st
 		UpdatedAt:   now,
 	}
 
-	if err := m.store.SaveOrganization(org); err != nil {
-		return nil, fmt.Errorf("save org: %w", err)
-	}
-
 	membership := &storage.Membership{
 		PeerID:   ownerPeerID,
 		OrgID:    orgID,
@@ -40,8 +36,22 @@ func (m *Manager) CreateOrganization(name, description, ownerPeerID string) (*st
 		JoinedAt: now,
 	}
 
-	if err := m.store.SaveMembership(membership); err != nil {
+	tx, err := m.store.DB().Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := m.store.SaveOrganizationTx(tx, org); err != nil {
+		return nil, fmt.Errorf("save org: %w", err)
+	}
+
+	if err := m.store.SaveMembershipTx(tx, membership); err != nil {
 		return nil, fmt.Errorf("save membership: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit tx: %w", err)
 	}
 
 	return org, nil

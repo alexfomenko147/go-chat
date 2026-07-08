@@ -30,6 +30,22 @@ type Membership struct {
 	JoinedAt time.Time `json:"joined_at"`
 }
 
+func (s *Store) SaveOrganizationTx(tx *sql.Tx, org *Organization) error {
+	_, err := tx.Exec(`INSERT INTO organizations (org_id, name, description, icon, owner_peer_id, visibility, max_members, history_retention, attachment_limit, archived, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(org_id) DO UPDATE SET
+			name=excluded.name, description=excluded.description, icon=excluded.icon,
+			visibility=excluded.visibility, max_members=excluded.max_members,
+			history_retention=excluded.history_retention, attachment_limit=excluded.attachment_limit,
+			archived=excluded.archived, updated_at=excluded.updated_at`,
+		org.OrgID, org.Name, org.Description, org.Icon, org.OwnerPeerID, org.Visibility,
+		org.MaxMembers, org.HistoryRetention, org.AttachmentLimit, org.Archived, org.CreatedAt, org.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("save org tx: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) SaveOrganization(org *Organization) error {
 	_, err := s.db.Exec(`INSERT INTO organizations (org_id, name, description, icon, owner_peer_id, visibility, max_members, history_retention, attachment_limit, archived, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -85,6 +101,16 @@ func (s *Store) ListOrganizations() ([]*Organization, error) {
 func (s *Store) DeleteOrganization(orgID string) error {
 	_, err := s.db.Exec(`DELETE FROM organizations WHERE org_id=?`, orgID)
 	return err
+}
+
+func (s *Store) SaveMembershipTx(tx *sql.Tx, m *Membership) error {
+	_, err := tx.Exec(`INSERT INTO memberships (peer_id, org_id, role, joined_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(peer_id, org_id) DO UPDATE SET role=excluded.role`,
+		m.PeerID, m.OrgID, m.Role, m.JoinedAt)
+	if err != nil {
+		return fmt.Errorf("save membership tx: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) SaveMembership(m *Membership) error {

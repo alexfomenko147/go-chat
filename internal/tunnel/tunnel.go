@@ -1,11 +1,13 @@
 package tunnel
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 func RunServer(addr string) error {
@@ -15,8 +17,9 @@ func RunServer(addr string) error {
 	}
 	defer ln.Close()
 
-	nextID := 1
 	var mu sync.Mutex
+	nextID := 1
+	pending := make(map[uint32]chan net.Conn)
 
 	for {
 		conn, err := ln.Accept()
@@ -27,43 +30,102 @@ func RunServer(addr string) error {
 		go func(c net.Conn) {
 			defer c.Close()
 
-			var localPort uint32
-			if err := binary.Read(c, binary.BigEndian, &localPort); err != nil {
+			var first uint32
+			if err := binary.Read(c, binary.BigEndian, &first); err != nil {
+				return
+			}
+
+			mu.Lock()
+			ch, isDataBack := pending[first]
+			mu.Unlock()
+
+			if isDataBack {
+				ch <- c
 				return
 			}
 
 			mu.Lock()
 			id := nextID
 			nextID++
-			publicPort := 20000 + id
+			publicPort := uint32(20000 + id)
+			ch = make(chan net.Conn, 1)
+			pending[publicPort] = ch
 			mu.Unlock()
 
 			if err := binary.Write(c, binary.BigEndian, uint32(publicPort)); err != nil {
+				mu.Lock()
+				delete(pending, publicPort)
+				mu.Unlock()
 				return
 			}
 
 			fmt.Printf("tunnel: %s -> port %d\n", c.RemoteAddr(), publicPort)
 
-			clientAddr := c.RemoteAddr().(*net.TCPAddr)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			defer func() {
+				mu.Lock()
+				delete(pending, publicPort)
+				mu.Unlock()
+			}()
+
+			go func() {
+				buf := make([]byte, 1)
+				for {
+					if _, err := io.ReadFull(c, buf); err != nil {
+						cancel()
+						return
+					}
+				}
+			}()
+
+			dataLn, err := net.Listen("tcp", fmt.Sprintf(":%d", publicPort))
+			if err != nil {
+				return
+			}
+			defer dataLn.Close()
+
 			for {
-				_, err := c.Write([]byte{1})
+				peerConn, err := dataLn.Accept()
 				if err != nil {
 					return
 				}
 
-				dataConn, err := net.Dial("tcp", clientAddr.String())
-				if err != nil {
+				select {
+				case <-ctx.Done():
+					peerConn.Close()
+					return
+				default:
+				}
+
+				if _, err := c.Write([]byte{1}); err != nil {
+					peerConn.Close()
 					return
 				}
 
-				go func() {
-					io.Copy(dataConn, c)
-					dataConn.Close()
-				}()
-				go func() {
-					io.Copy(c, dataConn)
-					dataConn.Close()
-				}()
+				select {
+				case dataBack := <-ch:
+					go func() {
+						defer peerConn.Close()
+						defer dataBack.Close()
+						var wg sync.WaitGroup
+						wg.Add(2)
+						go func() {
+							io.Copy(dataBack, peerConn)
+							wg.Done()
+						}()
+						go func() {
+							io.Copy(peerConn, dataBack)
+							wg.Done()
+						}()
+						wg.Wait()
+					}()
+				case <-ctx.Done():
+					peerConn.Close()
+					return
+				case <-time.After(30 * time.Second):
+					peerConn.Close()
+				}
 			}
 		}(conn)
 	}
@@ -100,6 +162,10 @@ func RunClient(serverAddr string, localPort int) (int, error) {
 					return
 				}
 				defer dataConn.Close()
+
+				if err := binary.Write(dataConn, binary.BigEndian, publicPort); err != nil {
+					return
+				}
 
 				localConn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
 				if err != nil {

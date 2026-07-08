@@ -1,6 +1,10 @@
 package storage
 
-import "time"
+import (
+	"fmt"
+	"strconv"
+	"time"
+)
 
 type Connection struct {
 	ID              int64     `json:"id"`
@@ -8,6 +12,22 @@ type Connection struct {
 	Nickname        string    `json:"nickname"`
 	LastConnectedAt time.Time `json:"last_connected_at"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+func parseTimestamp(s string) (time.Time, error) {
+	formats := []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return time.Unix(i, 0).UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("unable to parse timestamp: %s", s)
 }
 
 func (s *Store) SaveConnection(c *Connection) error {
@@ -35,8 +55,14 @@ func (s *Store) ListConnections() ([]*Connection, error) {
 		if err := rows.Scan(&c.ID, &c.Address, &c.Nickname, &lastConnected, &created); err != nil {
 			return nil, err
 		}
-		c.LastConnectedAt, _ = time.Parse(time.RFC3339, lastConnected)
-		c.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		c.LastConnectedAt, err = parseTimestamp(lastConnected)
+		if err != nil {
+			s.logger.Warn("parse last_connected_at: %v", err)
+		}
+		c.CreatedAt, err = parseTimestamp(created)
+		if err != nil {
+			s.logger.Warn("parse created_at: %v", err)
+		}
 		conns = append(conns, &c)
 	}
 	return conns, rows.Err()
@@ -50,8 +76,14 @@ func (s *Store) GetConnection(id int64) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.LastConnectedAt, _ = time.Parse(time.RFC3339, lastConnected)
-	c.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	c.LastConnectedAt, err = parseTimestamp(lastConnected)
+	if err != nil {
+		s.logger.Warn("parse last_connected_at: %v", err)
+	}
+	c.CreatedAt, err = parseTimestamp(created)
+	if err != nil {
+		s.logger.Warn("parse created_at: %v", err)
+	}
 	return &c, nil
 }
 

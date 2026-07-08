@@ -8,15 +8,17 @@ import (
 	"time"
 
 	"go-chat/internal/config"
+	"go-chat/internal/logging"
 
 	_ "modernc.org/sqlite"
 )
 
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *logging.Logger
 }
 
-func New(cfg config.DatabaseConfig) (*Store, error) {
+func New(cfg config.DatabaseConfig, logger *logging.Logger) (*Store, error) {
 	dir := filepath.Dir(cfg.Path)
 	if dir != "." {
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -36,7 +38,7 @@ func New(cfg config.DatabaseConfig) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
-	s := &Store{db: db}
+	s := &Store{db: db, logger: logger}
 	if err := s.migrate(); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -54,6 +56,7 @@ func (s *Store) DB() *sql.DB {
 
 func (s *Store) migrate() error {
 	tables := []string{
+		`PRAGMA foreign_keys = ON`,
 		`CREATE TABLE IF NOT EXISTS identities (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			display_name TEXT NOT NULL DEFAULT '',
@@ -89,7 +92,7 @@ func (s *Store) migrate() error {
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			icon TEXT NOT NULL DEFAULT '',
-			owner_peer_id TEXT NOT NULL,
+			owner_peer_id TEXT NOT NULL REFERENCES peers(peer_id),
 			visibility TEXT NOT NULL DEFAULT 'private',
 			max_members INTEGER NOT NULL DEFAULT 0,
 			history_retention INTEGER NOT NULL DEFAULT 0,
@@ -131,8 +134,8 @@ func (s *Store) migrate() error {
 		`CREATE TABLE IF NOT EXISTS messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			message_id TEXT NOT NULL UNIQUE,
-			channel_id TEXT NOT NULL,
-			sender_peer_id TEXT NOT NULL,
+			channel_id TEXT NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
+			sender_peer_id TEXT NOT NULL REFERENCES peers(peer_id),
 			content TEXT NOT NULL,
 			content_type TEXT NOT NULL DEFAULT 'text',
 			encrypted INTEGER NOT NULL DEFAULT 1,
@@ -203,7 +206,7 @@ func (s *Store) migrate() error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS connections (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			address TEXT NOT NULL,
+			address TEXT NOT NULL UNIQUE,
 			nickname TEXT NOT NULL DEFAULT '',
 			last_connected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP

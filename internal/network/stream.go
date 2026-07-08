@@ -2,19 +2,25 @@ package network
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"strings"
+	"sync"
 	"time"
 
+	"go-chat/internal/crypto"
 	"go-chat/internal/storage"
 
 	"github.com/libp2p/go-libp2p/core/network"
 )
 
 type StreamHandler struct {
-	node *Node
+	node   *Node
+	mu     sync.Mutex
+	dedupMu sync.Mutex
 }
 
 func NewStreamHandler(node *Node) *StreamHandler {
@@ -28,8 +34,12 @@ func (h *StreamHandler) Handle(s network.Stream) {
 	r := bufio.NewReader(s)
 
 	for {
+		s.SetReadDeadline(time.Now().Add(30 * time.Second))
 		data, err := r.ReadBytes('\n')
 		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
 			if err != io.EOF {
 				h.node.Logger.Debug("stream read error from %s: %v", peerID, err)
 			}
@@ -42,16 +52,60 @@ func (h *StreamHandler) Handle(s network.Stream) {
 			continue
 		}
 
+		if msg.Type == "key_exchange" {
+			h.handleKeyExchange(s, peerID, &msg)
+			continue
+		}
+
+		h.DecryptMessage(&msg, peerID)
+
+		if msg.Type == "sync_request" {
+			h.handleSyncRequest(s, peerID, r)
+			continue
+		}
+
 		h.handleMessage(&msg, s)
 	}
 }
 
+func (h *StreamHandler) handleSyncRequest(s network.Stream, peerID string, r *bufio.Reader) {
+	h.node.Logger.Info("handling sync request from %s", peerID)
+
+	for {
+		s.SetReadDeadline(time.Now().Add(30 * time.Second))
+		data, err := r.ReadBytes('\n')
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				h.node.Logger.Debug("sync read timeout from %s, assuming done", peerID)
+				break
+			}
+			h.node.Logger.Debug("sync read error from %s: %v", peerID, err)
+			return
+		}
+
+		var msg Message
+		if err := json.Unmarshal(data, &msg); err != nil {
+			h.node.Logger.Debug("invalid sync message from %s: %v", peerID, err)
+			continue
+		}
+
+		h.DecryptMessage(&msg, peerID)
+
+		if msg.Type == "sync_complete" {
+			break
+		}
+
+		h.handleMessage(&msg, s)
+	}
+
+	h.sendFullState(s)
+}
+
 func (h *StreamHandler) handleMessage(msg *Message, s network.Stream) {
-	h.node.Logger.Info("received %s from %s", msg.Type, msg.SenderID)
+	remotePeerID := h.remotePeerID(s)
+	h.node.Logger.Info("received %s from %s", msg.Type, remotePeerID)
 
 	switch msg.Type {
-	case "sync_request":
-		h.sendFullState(s)
 	case "sync_org":
 		if h.node.Store != nil {
 			h.handleSyncOrg(msg)
@@ -68,11 +122,11 @@ func (h *StreamHandler) handleMessage(msg *Message, s network.Stream) {
 		}
 	case "sync_peer":
 		if h.node.Store != nil {
-			h.handleSyncPeer(msg)
+			h.handleSyncPeer(msg, remotePeerID)
 			h.notifyRefresh()
 		}
 	default:
-		h.node.Logger.Debug("unknown message type: %s", msg.Type)
+		h.node.Logger.Debug("unknown message type: %s from %s", msg.Type, remotePeerID)
 	}
 }
 
@@ -86,19 +140,47 @@ func (h *StreamHandler) notifyRefresh() {
 }
 
 func (h *StreamHandler) sendFullState(s network.Stream) {
+	h.sendSyncState(s)
+
+	allMsgs, err := h.node.Store.ListAllMessages(50)
+	if err == nil {
+		remotePeerID := h.remotePeerID(s)
+		for _, m := range allMsgs {
+			if strings.HasPrefix(m.ChannelID, "dm_") && !strings.Contains(m.ChannelID, remotePeerID) {
+				continue
+			}
+			if err := h.SendMessage(s, &Message{
+				Type:       "message",
+				SenderID:   m.SenderPeerID,
+				ChannelID:  m.ChannelID,
+				MessageID:  m.MessageID,
+				Content:    m.Content,
+				Timestamp:  m.CreatedAt.UnixMilli(),
+			}); err != nil {
+				h.node.Logger.Warn("send message during full state sync: %v", err)
+			}
+		}
+	}
+}
+
+func (h *StreamHandler) sendSyncState(s network.Stream) {
 	remotePeerID := h.remotePeerID(s)
 
 	orgs, err := h.node.Store.ListOrganizations()
 	if err == nil {
 		for _, org := range orgs {
-			_ = h.SendMessage(s, &Message{
+			if err := h.SendMessage(s, &Message{
 				Type:      "sync_org",
 				SenderID:  h.node.Host.ID().String(),
 				OrgID:     org.OrgID,
 				Content:   org.Name,
 				Timestamp: org.CreatedAt.UnixMilli(),
-			})
+			}); err != nil {
+				h.node.Logger.Debug("send sync_org: %v", err)
+			}
 		}
+	} else {
+		h.node.Logger.Warn("list orgs for sync: %v", err)
 	}
 
 	channels, err := h.node.Store.ListAllChannels()
@@ -107,7 +189,7 @@ func (h *StreamHandler) sendFullState(s network.Stream) {
 			if strings.HasPrefix(ch.ChannelID, "dm_") && !strings.Contains(ch.ChannelID, remotePeerID) {
 				continue
 			}
-			_ = h.SendMessage(s, &Message{
+			if err := h.SendMessage(s, &Message{
 				Type:        "sync_channel",
 				SenderID:    h.node.Host.ID().String(),
 				OrgID:       ch.OrgID,
@@ -115,8 +197,12 @@ func (h *StreamHandler) sendFullState(s network.Stream) {
 				Content:     ch.Name,
 				ChannelType: ch.ChannelType,
 				Timestamp:   ch.CreatedAt.UnixMilli(),
-			})
+			}); err != nil {
+				h.node.Logger.Debug("send sync_channel: %v", err)
+			}
 		}
+	} else {
+		h.node.Logger.Warn("list channels for sync: %v", err)
 	}
 
 	allPeers, err := h.node.Store.ListPeers()
@@ -125,39 +211,42 @@ func (h *StreamHandler) sendFullState(s network.Stream) {
 			if p.DisplayName == "" || p.DisplayName == p.PeerID || p.DisplayName == "me" || strings.HasPrefix(p.DisplayName, "me_") {
 				continue
 			}
-			_ = h.SendMessage(s, &Message{
+			if err := h.SendMessage(s, &Message{
 				Type:      "sync_peer",
 				SenderID:  p.PeerID,
 				Content:   p.DisplayName,
 				Timestamp: time.Now().UnixMilli(),
-			})
+			}); err != nil {
+				h.node.Logger.Debug("send sync_peer: %v", err)
+			}
 		}
+	} else {
+		h.node.Logger.Warn("list peers for sync: %v", err)
 	}
 
 	myName := h.node.Host.ID().String()
-	if identity, _ := h.node.Store.GetIdentity(); identity != nil {
+	identity, err := h.node.Store.GetIdentity()
+	if err != nil {
+		h.node.Logger.Warn("get identity for sync state: %v", err)
+	}
+	if identity != nil {
 		myName = identity.DisplayName
 	}
-	_ = h.SendMessage(s, &Message{
+	if err := h.SendMessage(s, &Message{
 		Type:      "sync_peer",
 		SenderID:  h.node.Host.ID().String(),
 		Content:   myName,
 		Timestamp: time.Now().UnixMilli(),
-	})
-
-	allMsgs, err := h.node.Store.ListAllMessages(50)
-	if err == nil {
-		for _, m := range allMsgs {
-			_ = h.SendMessage(s, &Message{
-				Type:       "message",
-				SenderID:   m.SenderPeerID,
-				ChannelID:  m.ChannelID,
-				MessageID:  m.MessageID,
-				Content:    m.Content,
-				Timestamp:  m.CreatedAt.UnixMilli(),
-			})
-		}
+	}); err != nil {
+		h.node.Logger.Debug("send self sync_peer: %v", err)
 	}
+}
+
+func (h *StreamHandler) peerCanAccess(peerID, channelID string) bool {
+	if !strings.HasPrefix(channelID, "dm_") {
+		return true
+	}
+	return strings.Contains(channelID, peerID)
 }
 
 func (h *StreamHandler) handleSyncMessage(msg *Message) {
@@ -183,7 +272,10 @@ func (h *StreamHandler) handleSyncOrg(msg *Message) {
 	if msg.OrgID == "" {
 		return
 	}
-	existing, _ := h.node.Store.GetOrganization(msg.OrgID)
+	existing, err := h.node.Store.GetOrganization(msg.OrgID)
+	if err != nil {
+		h.node.Logger.Warn("get organization %s: %v", msg.OrgID, err)
+	}
 	if existing != nil {
 		return
 	}
@@ -209,7 +301,10 @@ func (h *StreamHandler) handleSyncChannel(msg *Message, s network.Stream) {
 			return
 		}
 	}
-	existing, _ := h.node.Store.GetChannel(msg.ChannelID)
+	existing, err := h.node.Store.GetChannel(msg.ChannelID)
+	if err != nil {
+		h.node.Logger.Warn("get channel %s: %v", msg.ChannelID, err)
+	}
 	if existing != nil {
 		return
 	}
@@ -229,20 +324,39 @@ func (h *StreamHandler) handleSyncChannel(msg *Message, s network.Stream) {
 	}
 }
 
-func (h *StreamHandler) handleSyncPeer(msg *Message) {
+func (h *StreamHandler) handleSyncPeer(msg *Message, remotePeerID string) {
 	if msg.SenderID == "" || msg.Content == "" {
 		return
 	}
 	if msg.Content == "me" || strings.HasPrefix(msg.Content, "me_") {
 		return
 	}
+	// Sender authentication: only allow a peer to claim their own identity
+	// or update an already-known peer
+	if msg.SenderID != remotePeerID {
+		known, err := h.node.Store.GetPeer(msg.SenderID)
+		if err != nil {
+			h.node.Logger.Warn("get peer %s: %v", msg.SenderID, err)
+		}
+		if known == nil {
+			h.node.Logger.Debug("rejected sync_peer from %s claiming unknown peer %s", remotePeerID, msg.SenderID)
+			return
+		}
+	}
 	name := msg.Content
-	existing, _ := h.node.Store.GetPeerByDisplayName(name)
+	h.dedupMu.Lock()
+	existing, err := h.node.Store.GetPeerByDisplayName(name)
+	if err != nil {
+		h.node.Logger.Warn("get peer by display name %s: %v", name, err)
+	}
 	if existing != nil && existing.PeerID != msg.SenderID {
 		suffix := 1
 		for {
 			candidate := fmt.Sprintf("%s_%d", name, suffix)
-			dup, _ := h.node.Store.GetPeerByDisplayName(candidate)
+			dup, err := h.node.Store.GetPeerByDisplayName(candidate)
+			if err != nil {
+				h.node.Logger.Warn("get peer by display name %s: %v", candidate, err)
+			}
 			if dup == nil {
 				name = candidate
 				break
@@ -250,12 +364,15 @@ func (h *StreamHandler) handleSyncPeer(msg *Message) {
 			suffix++
 		}
 	}
-	_ = h.node.Store.SavePeer(&storage.Peer{
+	h.dedupMu.Unlock()
+	if err := h.node.Store.SavePeer(&storage.Peer{
 		PeerID:      msg.SenderID,
 		DisplayName: name,
 		Status:      "online",
 		LastSeen:    time.Now().UTC(),
-	})
+	}); err != nil {
+		h.node.Logger.Warn("save synced peer: %v", err)
+	}
 }
 
 func (h *StreamHandler) remotePeerID(s network.Stream) string {
@@ -263,12 +380,29 @@ func (h *StreamHandler) remotePeerID(s network.Stream) string {
 }
 
 func (h *StreamHandler) SendMessage(s network.Stream, msg *Message) error {
-	data, err := json.Marshal(msg)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	sendMsg := *msg
+	peerID := s.Conn().RemotePeer().String()
+
+	if key, ok := h.node.GetSessionKey(peerID); ok && len(key) > 0 {
+		c := crypto.NewCipher(key)
+		encrypted, err := c.Encrypt([]byte(sendMsg.Content))
+		if err == nil {
+			sendMsg.Encrypted = true
+			sendMsg.EncryptedData = encrypted
+			sendMsg.Content = ""
+		}
+	}
+
+	data, err := json.Marshal(sendMsg)
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
 	data = append(data, '\n')
 
+	s.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	if _, err := s.Write(data); err != nil {
 		return fmt.Errorf("write message: %w", err)
 	}
@@ -276,17 +410,78 @@ func (h *StreamHandler) SendMessage(s network.Stream, msg *Message) error {
 	return nil
 }
 
+func (h *StreamHandler) DecryptMessage(msg *Message, peerID string) {
+	if !msg.Encrypted || msg.EncryptedData == nil {
+		return
+	}
+	key, ok := h.node.GetSessionKey(peerID)
+	if !ok || len(key) == 0 {
+		return
+	}
+	c := crypto.NewCipher(key)
+	decrypted, err := c.Decrypt(msg.EncryptedData)
+	if err != nil {
+		h.node.Logger.Debug("decrypt failed from %s: %v", peerID, err)
+		return
+	}
+	msg.Content = string(decrypted)
+	msg.Encrypted = false
+	msg.EncryptedData = nil
+}
+
+func (h *StreamHandler) handleKeyExchange(s network.Stream, peerID string, msg *Message) {
+	peerPub, err := base64.StdEncoding.DecodeString(msg.Content)
+	if err != nil || len(peerPub) != 32 {
+		h.node.Logger.Debug("invalid key_exchange from %s", peerID)
+		return
+	}
+
+	ephPriv, ephPub, err := crypto.GenerateEphemeralKeypair()
+	if err != nil {
+		h.node.Logger.Warn("generate ephemeral keypair: %v", err)
+		return
+	}
+
+	pubB64 := base64.StdEncoding.EncodeToString(ephPub)
+	h.SendMessage(s, &Message{
+		Type:     "key_exchange_ack",
+		SenderID: h.node.Host.ID().String(),
+		Content:  pubB64,
+	})
+
+	shared, err := crypto.ComputeSharedSecret(ephPriv, peerPub)
+	if err != nil {
+		h.node.Logger.Warn("x25519 shared secret: %v", err)
+		return
+	}
+
+	salt := append(peerPub, ephPub...)
+	key, err := crypto.DeriveSessionKeys(shared, salt)
+	if err != nil {
+		h.node.Logger.Warn("derive session keys: %v", err)
+		return
+	}
+
+	h.node.SetSessionKey(peerID, key)
+	h.node.Logger.Debug("key exchange complete with %s", peerID)
+}
+
 func (h *StreamHandler) ReceiveMessages(s network.Stream) {
 	r := bufio.NewReader(s)
 	for {
+		s.SetReadDeadline(time.Now().Add(30 * time.Second))
 		data, err := r.ReadBytes('\n')
 		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
 			return
 		}
 		var msg Message
 		if err := json.Unmarshal(data, &msg); err != nil {
 			continue
 		}
+		h.DecryptMessage(&msg, s.Conn().RemotePeer().String())
 		h.handleMessage(&msg, s)
 	}
 }

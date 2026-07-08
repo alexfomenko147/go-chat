@@ -3,17 +3,21 @@ package network
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"go-chat/internal/config"
+	"go-chat/internal/crypto"
 	"go-chat/internal/logging"
 	"go-chat/internal/storage"
 
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p/core/crypto"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -35,9 +39,12 @@ type Node struct {
 	Ctx       context.Context
 	Cancel    context.CancelFunc
 	mdns      mdns.Service
+
+	sessionKeys map[string][]byte
+	sessionMu   sync.RWMutex
 }
 
-func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Logger, store *storage.Store, refreshCh chan struct{}) (*Node, error) {
+func NewNode(privKey libp2pcrypto.PrivKey, cfg *config.NetworkConfig, log *logging.Logger, store *storage.Store, refreshCh chan struct{}) (*Node, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var staticRelays []peer.AddrInfo
@@ -81,13 +88,14 @@ func NewNode(privKey crypto.PrivKey, cfg *config.NetworkConfig, log *logging.Log
 	}
 
 	node := &Node{
-		Host:      h,
-		Config:    cfg,
-		Logger:    log,
-		Store:     store,
-		RefreshCh: refreshCh,
-		Ctx:       ctx,
-		Cancel:    cancel,
+		Host:        h,
+		Config:      cfg,
+		Logger:      log,
+		Store:       store,
+		RefreshCh:   refreshCh,
+		Ctx:         ctx,
+		Cancel:      cancel,
+		sessionKeys: make(map[string][]byte),
 	}
 
 	h.SetStreamHandler(ProtocolID, node.handleStream)
@@ -202,15 +210,31 @@ func (n *Node) Close() error {
 }
 
 func (n *Node) Broadcast(msg *Message) {
+	var wg sync.WaitGroup
 	for _, p := range n.Host.Network().Peers() {
-		s, err := n.Host.NewStream(n.Ctx, p, ProtocolID)
-		if err != nil {
-			n.Logger.Debug("broadcast to %s: %v", p.String(), err)
-			continue
+		if strings.HasPrefix(msg.ChannelID, "dm_") {
+			if msg.SenderID != "" && !strings.Contains(msg.ChannelID, msg.SenderID) {
+				continue
+			}
+			if !strings.Contains(msg.ChannelID, p.String()) {
+				continue
+			}
 		}
-		NewStreamHandler(n).SendMessage(s, msg)
-		s.Close()
+		wg.Add(1)
+		go func(peerID peer.ID) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(n.Ctx, 15*time.Second)
+			defer cancel()
+			s, err := n.Host.NewStream(ctx, peerID, ProtocolID)
+			if err != nil {
+				n.Logger.Debug("broadcast to %s: %v", peerID.String(), err)
+				return
+			}
+			defer s.Close()
+			NewStreamHandler(n).SendMessage(s, msg)
+		}(p)
 	}
+	wg.Wait()
 }
 
 func (n *Node) ConnectedPeers() []peer.ID {
@@ -221,6 +245,70 @@ func (n *Node) ConnectedCount() int {
 	return len(n.Host.Network().Peers())
 }
 
+func (n *Node) GetSessionKey(peerID string) ([]byte, bool) {
+	n.sessionMu.RLock()
+	defer n.sessionMu.RUnlock()
+	key, ok := n.sessionKeys[peerID]
+	return key, ok
+}
+
+func (n *Node) SetSessionKey(peerID string, key []byte) {
+	n.sessionMu.Lock()
+	defer n.sessionMu.Unlock()
+	n.sessionKeys[peerID] = key
+}
+
+func (n *Node) exchangeKeys(s network.Stream, peerID peer.ID, r *bufio.Reader) {
+	ephPriv, ephPub, err := crypto.GenerateEphemeralKeypair()
+	if err != nil {
+		n.Logger.Warn("generate ephemeral keypair: %v", err)
+		return
+	}
+
+	pubB64 := base64.StdEncoding.EncodeToString(ephPub)
+	handler := NewStreamHandler(n)
+	handler.SendMessage(s, &Message{
+		Type:     "key_exchange",
+		SenderID: n.Host.ID().String(),
+		Content:  pubB64,
+	})
+
+	s.SetReadDeadline(time.Now().Add(10 * time.Second))
+	ackData, err := r.ReadBytes('\n')
+	if err != nil {
+		n.Logger.Debug("key exchange ack not received from %s: %v", peerID.String(), err)
+		return
+	}
+
+	var ackMsg Message
+	if err := json.Unmarshal(ackData, &ackMsg); err != nil || ackMsg.Type != "key_exchange_ack" {
+		n.Logger.Debug("invalid key exchange ack from %s", peerID.String())
+		return
+	}
+
+	peerPub, err := base64.StdEncoding.DecodeString(ackMsg.Content)
+	if err != nil || len(peerPub) != 32 {
+		n.Logger.Debug("invalid key exchange pub key from %s", peerID.String())
+		return
+	}
+
+	shared, err := crypto.ComputeSharedSecret(ephPriv, peerPub)
+	if err != nil {
+		n.Logger.Warn("compute shared secret: %v", err)
+		return
+	}
+
+	salt := append(ephPub, peerPub...)
+	key, err := crypto.DeriveSessionKeys(shared, salt)
+	if err != nil {
+		n.Logger.Warn("derive session keys: %v", err)
+		return
+	}
+
+	n.SetSessionKey(peerID.String(), key)
+	n.Logger.Debug("key exchange complete with %s", peerID.String())
+}
+
 func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 	s, err := n.Host.NewStream(ctx, peerID, ProtocolID)
 	if err != nil {
@@ -229,6 +317,9 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 	defer s.Close()
 
 	handler := NewStreamHandler(n)
+	r := bufio.NewReader(s)
+
+	n.exchangeKeys(s, peerID, r)
 
 	handler.SendMessage(s, &Message{
 		Type:     "sync_request",
@@ -236,59 +327,16 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 	})
 
 	if n.Store != nil {
-		orgs, _ := n.Store.ListOrganizations()
-		for _, org := range orgs {
-			handler.SendMessage(s, &Message{
-				Type:      "sync_org",
-				SenderID:  n.Host.ID().String(),
-				OrgID:     org.OrgID,
-				Content:   org.Name,
-				Timestamp: org.CreatedAt.UnixMilli(),
-			})
-		}
+		handler.sendSyncState(s)
 
-		channels, _ := n.Store.ListAllChannels()
-		for _, ch := range channels {
-			if strings.HasPrefix(ch.ChannelID, "dm_") && !strings.Contains(ch.ChannelID, peerID.String()) {
-				continue
-			}
-			handler.SendMessage(s, &Message{
-				Type:        "sync_channel",
-				SenderID:    n.Host.ID().String(),
-				OrgID:       ch.OrgID,
-				ChannelID:   ch.ChannelID,
-				Content:     ch.Name,
-				ChannelType: ch.ChannelType,
-				Timestamp:   ch.CreatedAt.UnixMilli(),
-			})
+		msgs, err := n.Store.ListAllMessages(50)
+		if err != nil {
+			n.Logger.Warn("list all messages for sync: %v", err)
 		}
-
-		allPeers, _ := n.Store.ListPeers()
-		for _, p := range allPeers {
-			if p.DisplayName == "" || p.DisplayName == p.PeerID || p.DisplayName == "me" || strings.HasPrefix(p.DisplayName, "me_") {
-				continue
-			}
-			handler.SendMessage(s, &Message{
-				Type:      "sync_peer",
-				SenderID:  p.PeerID,
-				Content:   p.DisplayName,
-				Timestamp: time.Now().UnixMilli(),
-			})
-		}
-
-		myName := n.Host.ID().String()
-		if identity, _ := n.Store.GetIdentity(); identity != nil {
-			myName = identity.DisplayName
-		}
-		handler.SendMessage(s, &Message{
-			Type:      "sync_peer",
-			SenderID:  n.Host.ID().String(),
-			Content:   myName,
-			Timestamp: time.Now().UnixMilli(),
-		})
-
-		msgs, _ := n.Store.ListAllMessages(50)
 		for _, msg := range msgs {
+			if !handler.peerCanAccess(peerID.String(), msg.ChannelID) {
+				continue
+			}
 			handler.SendMessage(s, &Message{
 				Type:       "message",
 				SenderID:   msg.SenderPeerID,
@@ -300,16 +348,26 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 		}
 	}
 
-	r := bufio.NewReader(s)
+	handler.SendMessage(s, &Message{
+		Type:     "sync_complete",
+		SenderID: n.Host.ID().String(),
+	})
+
 	for {
+		s.SetReadDeadline(time.Now().Add(60 * time.Second))
 		data, err := r.ReadBytes('\n')
 		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
 			break
 		}
 		var msg Message
 		if err := json.Unmarshal(data, &msg); err != nil {
 			continue
 		}
+
+		handler.DecryptMessage(&msg, peerID.String())
 
 		switch msg.Type {
 		case "sync_org":
@@ -322,7 +380,7 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 			}
 		case "sync_peer":
 			if n.Store != nil {
-				handler.handleSyncPeer(&msg)
+				handler.handleSyncPeer(&msg, peerID.String())
 			}
 		case "message":
 			if n.Store != nil {

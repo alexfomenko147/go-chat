@@ -1,6 +1,8 @@
 package crypto
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -8,7 +10,6 @@ import (
 	"fmt"
 	"io"
 
-	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/hkdf"
 )
@@ -31,39 +32,36 @@ func Fingerprint(pub ed25519.PublicKey) string {
 	return hex.EncodeToString(h[:16])
 }
 
-type SessionKeys struct {
-	SharedSecret []byte
-	EncKey       []byte
-	AuthKey      []byte
+// GenerateEphemeralKeypair generates an ephemeral X25519 keypair for key exchange.
+func GenerateEphemeralKeypair() (priv, pub []byte, err error) {
+	priv = make([]byte, 32)
+	if _, err := rand.Read(priv); err != nil {
+		return nil, nil, fmt.Errorf("generate ephemeral priv: %w", err)
+	}
+	priv[0] &= 248
+	priv[31] &= 127
+	priv[31] |= 64
+
+	pub, err = curve25519.X25519(priv, curve25519.Basepoint)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate ephemeral pub: %w", err)
+	}
+	return priv, pub, nil
 }
 
-func DeriveSessionKeys(privateKey ed25519.PrivateKey, publicKey ed25519.PublicKey) (*SessionKeys, error) {
-	curvePriv := ed25519PrivateKeyToCurve25519(privateKey)
-	curvePub, err := ed25519PublicKeyToCurve25519(publicKey)
-	if err != nil {
-		return nil, fmt.Errorf("convert public key: %w", err)
-	}
+// ComputeSharedSecret computes an X25519 shared secret.
+func ComputeSharedSecret(privateKey, publicKey []byte) ([]byte, error) {
+	return curve25519.X25519(privateKey, publicKey)
+}
 
-	shared, err := curve25519.X25519(curvePriv, curvePub)
-	if err != nil {
-		return nil, fmt.Errorf("x25519 shared secret: %w", err)
+// DeriveSessionKeys derives a 32-byte AES-GCM key from a shared secret and salt using HKDF-SHA256.
+func DeriveSessionKeys(sharedSecret, salt []byte) ([]byte, error) {
+	h := hkdf.New(sha256.New, sharedSecret, salt, []byte("go-chat-session-key"))
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(h, key); err != nil {
+		return nil, fmt.Errorf("hkdf derive session key: %w", err)
 	}
-
-	h := hkdf.New(sha256.New, shared, nil, []byte("go-chat-session-key"))
-	encKey := make([]byte, 32)
-	authKey := make([]byte, 32)
-	if _, err := io.ReadFull(h, encKey); err != nil {
-		return nil, fmt.Errorf("hkdf enc key: %w", err)
-	}
-	if _, err := io.ReadFull(h, authKey); err != nil {
-		return nil, fmt.Errorf("hkdf auth key: %w", err)
-	}
-
-	return &SessionKeys{
-		SharedSecret: shared,
-		EncKey:       encKey,
-		AuthKey:      authKey,
-	}, nil
+	return key, nil
 }
 
 type Cipher struct {
@@ -75,9 +73,13 @@ func NewCipher(key []byte) *Cipher {
 }
 
 func (c *Cipher) Encrypt(plaintext []byte) ([]byte, error) {
-	aead, err := chacha20poly1305.New(c.key)
+	block, err := aes.NewCipher(c.key)
 	if err != nil {
-		return nil, fmt.Errorf("new chacha20poly1305: %w", err)
+		return nil, fmt.Errorf("new aes cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("new gcm: %w", err)
 	}
 
 	nonce := make([]byte, aead.NonceSize())
@@ -90,9 +92,13 @@ func (c *Cipher) Encrypt(plaintext []byte) ([]byte, error) {
 }
 
 func (c *Cipher) Decrypt(data []byte) ([]byte, error) {
-	aead, err := chacha20poly1305.New(c.key)
+	block, err := aes.NewCipher(c.key)
 	if err != nil {
-		return nil, fmt.Errorf("new chacha20poly1305: %w", err)
+		return nil, fmt.Errorf("new aes cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("new gcm: %w", err)
 	}
 
 	nonceSize := aead.NonceSize()

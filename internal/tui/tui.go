@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"go-chat/internal/app"
 	"go-chat/internal/crypto"
@@ -29,8 +30,6 @@ type Model struct {
 	ready        bool
 	width        int
 	height       int
-	firstLaunch  bool
-
 	channelList  []*storage.Channel
 	selectedChan int
 
@@ -54,8 +53,6 @@ type Model struct {
 	pendingConnect string
 	needsName      bool
 	namePromptErr  string
-
-	err          error
 }
 
 func NewModel(a *app.App) *Model {
@@ -71,7 +68,6 @@ func NewModel(a *app.App) *Model {
 		app:         a,
 		input:       ti,
 		inputMode:   true,
-		firstLaunch: true,
 		needsName:   a.IsDefaultName(),
 		statusText:  fmt.Sprintf("PeerID: %s | /myaddr to see shareable address", a.PeerID()),
 	}
@@ -80,12 +76,20 @@ func NewModel(a *app.App) *Model {
 }
 
 type refreshMsg struct{}
+type statusMsg string
+type firstLaunchMsg struct{}
 
 func (m *Model) Init() tea.Cmd {
 	m.loadChannels()
 	m.loadPeers()
 	m.loadLogs()
-	return tea.Batch(textinput.Blink, m.waitForEvent())
+	return tea.Batch(textinput.Blink, m.waitForEvent(), m.firstLaunchCmd())
+}
+
+func (m *Model) firstLaunchCmd() tea.Cmd {
+	return func() tea.Msg {
+		return firstLaunchMsg{}
+	}
 }
 
 func (m *Model) waitForEvent() tea.Cmd {
@@ -128,6 +132,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.input.Width = m.width - 56
+		if m.needsName {
+			m.input.Width = 42
+		}
+
+	case statusMsg:
+		m.addStatus(string(msg))
+
+	case firstLaunchMsg:
+		m.addStatus("Tab to navigate | ? for help | /channel create <name>")
 
 	case tea.KeyMsg:
 		if m.needsName {
@@ -240,31 +253,6 @@ func (m *Model) handleInput() tea.Cmd {
 			m.loadChannels()
 			m.loadPeers()
 		}
-		return nil
-	}
-
-	if m.pendingConnect != "" {
-		addr := m.pendingConnect
-		m.pendingConnect = ""
-		m.input.Placeholder = "Type a message or /help..."
-		if strings.HasPrefix(text, "/") {
-			return m.handleCommand(text)
-		}
-		name := strings.TrimSpace(text)
-		if name == "" || name == "me" || strings.HasPrefix(name, "me_") {
-			m.addStatus("Invalid or reserved name")
-			return nil
-		}
-		m.app.SetDisplayName(name)
-		m.addStatus(fmt.Sprintf("Name set to '%s', connecting to %s...", name, addr))
-		if err := m.app.Connect(addr); err != nil {
-			m.addStatus(fmt.Sprintf("Connect error: %v", err))
-			return nil
-		}
-		m.app.SaveConnection(addr)
-		m.addStatus(fmt.Sprintf("Connected to %s", addr))
-		m.loadChannels()
-		m.loadPeers()
 		return nil
 	}
 
@@ -478,24 +466,21 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 
 		m.addStatus(fmt.Sprintf("Connecting to tunnel %s ...", serverAddr))
 
-		go func() {
+		return func() tea.Msg {
 			publicPort, err := tunnel.RunClient(serverAddr, localPort)
 			if err != nil {
-				m.addStatus(fmt.Sprintf("Tunnel error: %v", err))
-				return
+				return statusMsg(fmt.Sprintf("Tunnel error: %v", err))
 			}
 			host, _, _ := net.SplitHostPort(serverAddr)
-			m.addStatus(fmt.Sprintf("Tunnel active! Share: /connect /ip4/%s/tcp/%d/p2p/%s", host, publicPort, m.app.PeerID()))
-		}()
+			return statusMsg(fmt.Sprintf("Tunnel active! Share: /connect /ip4/%s/tcp/%d/p2p/%s", host, publicPort, m.app.PeerID()))
+		}
 
 	case "/publicip":
 		m.addStatus("Looking up public IP...")
-		go func() {
+		return func() tea.Msg {
 			ip, err := fetchPublicIP()
 			if err != nil {
-				m.addStatus(fmt.Sprintf("Public IP lookup failed: %v", err))
-				m.addStatus("Try: curl ifconfig.me  (in another terminal)")
-				return
+				return statusMsg(fmt.Sprintf("Public IP lookup failed: %v", err) + "\nTry: curl ifconfig.me  (in another terminal)")
 			}
 			port := 0
 			for _, addr := range m.app.AllAddrs() {
@@ -505,11 +490,10 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 				}
 			}
 			if port > 0 {
-				m.addStatus(fmt.Sprintf("If UPnP works or port %d is forwarded: /connect /ip4/%s/tcp/%d/p2p/%s", port, ip, port, m.app.PeerID()))
-			} else {
-				m.addStatus(fmt.Sprintf("Public IP: %s", ip))
+				return statusMsg(fmt.Sprintf("If UPnP works or port %d is forwarded: /connect /ip4/%s/tcp/%d/p2p/%s", port, ip, port, m.app.PeerID()))
 			}
-		}()
+			return statusMsg(fmt.Sprintf("Public IP: %s", ip))
+		}
 
 	case "/connections":
 		conns, err := m.app.ListConnections()
@@ -526,9 +510,9 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 		lines := []string{"Saved connections:"}
 		for i, c := range conns {
 			addr := c.Address
-			if len(addr) > 50 {
-				addr = addr[:50] + "..."
-			}
+		if utf8.RuneCountInString(addr) > 50 {
+			addr = string([]rune(addr)[:50]) + "..."
+		}
 			nick := c.Nickname
 			if nick == "" {
 				nick = "-"
@@ -679,11 +663,6 @@ func (m *Model) View() string {
 		input = DimmedInputStyle.Render(m.input.View())
 	}
 
-	if m.firstLaunch {
-		m.firstLaunch = false
-		m.addStatus("Tab to navigate | ? for help | /channel create <name>")
-	}
-
 	body := lipgloss.JoinVertical(lipgloss.Left, topRow, input, statusBar)
 
 	return AppStyle.Render(body)
@@ -691,9 +670,6 @@ func (m *Model) View() string {
 
 func (m *Model) renderNameModal() string {
 	modalW := 50
-	inputW := modalW - 8
-
-	m.input.Width = inputW
 
 	title := lipgloss.NewStyle().
 		Bold(true).
@@ -739,8 +715,8 @@ func (m *Model) renderChannelPanel() string {
 			prefix = "@ "
 		}
 		name := ch.Name
-		if len(name) > 28 {
-			name = name[:28]
+		if utf8.RuneCountInString(name) > 28 {
+			name = string([]rune(name)[:28])
 		}
 		if i == m.selectedChan {
 			items = append(items, SelectedChannelStyle.Render("  "+prefix+name+"  "))
@@ -767,8 +743,8 @@ func (m *Model) renderLogPanel() string {
 	}
 	for i := start; i < len(m.logEntries); i++ {
 		entry := m.logEntries[i]
-		if len(entry) > 60 {
-			entry = entry[:60]
+		if utf8.RuneCountInString(entry) > 60 {
+			entry = string([]rune(entry)[:60])
 		}
 		lines = append(lines, DimmedStyle.Render(entry))
 	}
@@ -814,8 +790,12 @@ func (m *Model) renderMessages() string {
 			senderStyle = SelfSenderStyle
 		}
 		content := msg.Content
-		if len(content) > chatWidth-20 {
-			content = content[:chatWidth-23] + "..."
+		maxRunes := chatWidth - 20
+		if maxRunes < 10 {
+			maxRunes = 10
+		}
+		if utf8.RuneCountInString(content) > maxRunes {
+			content = string([]rune(content)[:maxRunes-3]) + "..."
 		}
 		line := fmt.Sprintf("%s %s %s",
 			TimeStyle.Render(msg.Timestamp),
@@ -898,8 +878,8 @@ func (m Model) peersView() string {
 	var items []string
 	for _, p := range m.peerList {
 		id := p.PeerID
-		if len(id) > 16 {
-			id = id[:16]
+		if utf8.RuneCountInString(id) > 16 {
+			id = string([]rune(id)[:16])
 		}
 		items = append(items, fmt.Sprintf("  %s (%s) [%s]", p.DisplayName, p.Status, id))
 	}
@@ -912,7 +892,7 @@ func extractPort(addr string) int {
 	}
 	parts := strings.Split(addr, "/")
 	for i, part := range parts {
-		if part == "tcp" && i+1 < len(parts) {
+		if (part == "tcp" || part == "udp" || part == "quic" || part == "quic-v1") && i+1 < len(parts) {
 			var port int
 			if _, err := fmt.Sscanf(parts[i+1], "%d", &port); err == nil {
 				return port
