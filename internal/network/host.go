@@ -353,15 +353,23 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 		SenderID: n.Host.ID().String(),
 	})
 
+	timeoutCnt := 0
 	for {
 		s.SetReadDeadline(time.Now().Add(60 * time.Second))
 		data, err := r.ReadBytes('\n')
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				timeoutCnt++
+				if timeoutCnt >= 3 {
+					n.Logger.Debug("sync read idle timeout from %s, exiting", peerID.String())
+					break
+				}
 				continue
 			}
 			break
 		}
+		timeoutCnt = 0
+
 		var msg Message
 		if err := json.Unmarshal(data, &msg); err != nil {
 			continue

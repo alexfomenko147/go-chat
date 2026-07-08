@@ -249,9 +249,59 @@ func (h *StreamHandler) peerCanAccess(peerID, channelID string) bool {
 	return strings.Contains(channelID, peerID)
 }
 
+func (h *StreamHandler) ensurePeerExists(peerID string) {
+	if peerID == "" {
+		return
+	}
+	existing, err := h.node.Store.GetPeer(peerID)
+	if err != nil {
+		h.node.Logger.Warn("get peer %s: %v", peerID, err)
+	}
+	if existing != nil {
+		return
+	}
+	p := &storage.Peer{
+		PeerID:      peerID,
+		DisplayName: peerID,
+		Status:      "unknown",
+		FirstSeen:   time.Now().UTC(),
+		LastSeen:    time.Now().UTC(),
+	}
+	if err := h.node.Store.SavePeer(p); err != nil {
+		h.node.Logger.Warn("create stub peer: %v", err)
+	}
+}
+
 func (h *StreamHandler) handleSyncMessage(msg *Message) {
 	if msg.MessageID == "" || msg.ChannelID == "" {
 		return
+	}
+	h.ensurePeerExists(msg.SenderID)
+
+	existing, err := h.node.Store.GetChannel(msg.ChannelID)
+	if err != nil {
+		h.node.Logger.Warn("get channel %s: %v", msg.ChannelID, err)
+	}
+	if existing == nil {
+		ch := &storage.Channel{
+			ChannelID:   msg.ChannelID,
+			Name:        msg.ChannelID,
+			ChannelType: "text",
+			CreatedAt:   time.Now().UTC(),
+			UpdatedAt:   time.Now().UTC(),
+		}
+		if msg.ChannelType != "" {
+			ch.ChannelType = msg.ChannelType
+		}
+		if msg.Content != "" {
+			ch.Name = msg.Content
+		}
+		if strings.HasPrefix(msg.ChannelID, "dm_") {
+			ch.ChannelType = "dm"
+		}
+		if err := h.node.Store.SaveChannel(ch); err != nil {
+			h.node.Logger.Warn("create channel from message: %v", err)
+		}
 	}
 	storeMsg := &storage.Message{
 		MessageID:     msg.MessageID,
