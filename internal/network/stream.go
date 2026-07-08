@@ -18,8 +18,8 @@ import (
 )
 
 type StreamHandler struct {
-	node   *Node
-	mu     sync.Mutex
+	node    *Node
+	mu      sync.Mutex
 	dedupMu sync.Mutex
 }
 
@@ -150,12 +150,12 @@ func (h *StreamHandler) sendFullState(s network.Stream) {
 				continue
 			}
 			if err := h.SendMessage(s, &Message{
-				Type:       "message",
-				SenderID:   m.SenderPeerID,
-				ChannelID:  m.ChannelID,
-				MessageID:  m.MessageID,
-				Content:    m.Content,
-				Timestamp:  m.CreatedAt.UnixMilli(),
+				Type:      "message",
+				SenderID:  m.SenderPeerID,
+				ChannelID: m.ChannelID,
+				MessageID: m.MessageID,
+				Content:   m.Content,
+				Timestamp: m.CreatedAt.UnixMilli(),
 			}); err != nil {
 				h.node.Logger.Warn("send message during full state sync: %v", err)
 			}

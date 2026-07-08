@@ -338,12 +338,12 @@ func (n *Node) SyncWithPeer(ctx context.Context, peerID peer.ID) error {
 				continue
 			}
 			handler.SendMessage(s, &Message{
-				Type:       "message",
-				SenderID:   msg.SenderPeerID,
-				ChannelID:  msg.ChannelID,
-				MessageID:  msg.MessageID,
-				Content:    msg.Content,
-				Timestamp:  msg.CreatedAt.UnixMilli(),
+				Type:      "message",
+				SenderID:  msg.SenderPeerID,
+				ChannelID: msg.ChannelID,
+				MessageID: msg.MessageID,
+				Content:   msg.Content,
+				Timestamp: msg.CreatedAt.UnixMilli(),
 			})
 		}
 	}

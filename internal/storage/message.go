@@ -7,20 +7,20 @@ import (
 )
 
 type Message struct {
-	ID           int64     `json:"id"`
-	MessageID    string    `json:"message_id"`
-	ChannelID    string    `json:"channel_id"`
-	SenderPeerID string    `json:"sender_peer_id"`
-	Content      string    `json:"content"`
-	ContentType  string    `json:"content_type"`
-	Encrypted    bool      `json:"encrypted"`
-	ReplyTo      string    `json:"reply_to"`
-	Edited       bool      `json:"edited"`
-	Deleted      bool      `json:"deleted"`
-	Pinned       bool      `json:"pinned"`
-	DeliveryState string   `json:"delivery_state"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            int64     `json:"id"`
+	MessageID     string    `json:"message_id"`
+	ChannelID     string    `json:"channel_id"`
+	SenderPeerID  string    `json:"sender_peer_id"`
+	Content       string    `json:"content"`
+	ContentType   string    `json:"content_type"`
+	Encrypted     bool      `json:"encrypted"`
+	ReplyTo       string    `json:"reply_to"`
+	Edited        bool      `json:"edited"`
+	Deleted       bool      `json:"deleted"`
+	Pinned        bool      `json:"pinned"`
+	DeliveryState string    `json:"delivery_state"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 func (s *Store) SaveMessage(msg *Message) error {

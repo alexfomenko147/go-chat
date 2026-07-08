@@ -27,27 +27,27 @@ type MessageItem struct {
 }
 
 type Model struct {
-	app          *app.App
-	ready        bool
-	width        int
-	height       int
-	channelList  []*storage.Channel
-	selectedChan int
+	app            *app.App
+	ready          bool
+	width          int
+	height         int
+	channelList    []*storage.Channel
+	selectedChan   int
 
-	chatView     viewport.Model
-	messages     []MessageItem
+	chatView       viewport.Model
+	messages       []MessageItem
 
-	input        textinput.Model
-	inputMode    bool
+	input          textinput.Model
+	inputMode      bool
 
-	statusText   string
-	statusLog    []string
+	statusText     string
+	statusLog      []string
 
-	peerList     []*storage.Peer
-	logEntries   []string
+	peerList       []*storage.Peer
+	logEntries     []string
 
-	showHelp     bool
-	showPeers    bool
+	showHelp       bool
+	showPeers      bool
 
 	logPanelFocused bool
 
@@ -66,11 +66,11 @@ func NewModel(a *app.App) *Model {
 	a.Logger.SetConsoleOutput(false)
 
 	m := &Model{
-		app:         a,
-		input:       ti,
-		inputMode:   true,
-		needsName:   a.IsDefaultName(),
-		statusText:  fmt.Sprintf("PeerID: %s | /myaddr to see shareable address", a.PeerID()),
+		app:        a,
+		input:      ti,
+		inputMode:  true,
+		needsName:  a.IsDefaultName(),
+		statusText: fmt.Sprintf("PeerID: %s | /myaddr to see shareable address", a.PeerID()),
 	}
 
 	return m
@@ -516,14 +516,14 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 		lines := []string{"Saved connections:"}
 		for i, c := range conns {
 			addr := c.Address
-		if utf8.RuneCountInString(addr) > 50 {
-			addr = string([]rune(addr)[:50]) + "..."
-		}
-		nick := c.Nickname
-		if nick == "" {
-			nick = "-"
-		}
-		lines = append(lines, fmt.Sprintf("  %d. %s  (%s)", i+1, addr, nick))
+			if utf8.RuneCountInString(addr) > 50 {
+				addr = string([]rune(addr)[:50]) + "..."
+			}
+			nick := c.Nickname
+			if nick == "" {
+				nick = "-"
+			}
+			lines = append(lines, fmt.Sprintf("  %d. %s  (%s)", i+1, addr, nick))
 		}
 		lines = append(lines, "Reconnect: /connect <index>")
 		for _, line := range lines {
