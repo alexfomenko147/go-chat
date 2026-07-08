@@ -15,7 +15,6 @@ import (
 	"go-chat/internal/network"
 	"go-chat/internal/organization"
 	"go-chat/internal/peermgr"
-	"go-chat/internal/protocol"
 	"go-chat/internal/storage"
 
 	lp2ppeer "github.com/libp2p/go-libp2p/core/peer"
@@ -249,11 +248,6 @@ func (a *App) IsReservedDisplayName(name string) bool {
 
 func (a *App) SendMessage(channelID, content, contentType string) error {
 	msgID := fmt.Sprintf("msg_%s_%d", a.PeerID(), time.Now().UnixNano())
-	cipher := crypto.NewCipher(make([]byte, 32))
-	env, err := protocol.NewEncryptedMessage(a.PeerID(), channelID, msgID, content, contentType, "", cipher)
-	if err != nil {
-		return fmt.Errorf("create encrypted message: %w", err)
-	}
 
 	msg := &storage.Message{
 		MessageID:     msgID,
@@ -261,7 +255,6 @@ func (a *App) SendMessage(channelID, content, contentType string) error {
 		SenderPeerID:  a.PeerID(),
 		Content:       content,
 		ContentType:   contentType,
-		Encrypted:     env.EncryptedData != nil,
 		DeliveryState: "sent",
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),

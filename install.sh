@@ -2,7 +2,7 @@
 set -eu
 
 REPO="Fenomen-Alex/go-chat"
-VERSION="${VERSION:-v0.1.1}"
+VERSION="${VERSION:-v0.1.0}"
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')

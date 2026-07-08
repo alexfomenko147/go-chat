@@ -283,18 +283,19 @@ func (h *StreamHandler) handleSyncMessage(msg *Message) {
 		h.node.Logger.Warn("get channel %s: %v", msg.ChannelID, err)
 	}
 	if existing == nil {
+		name := msg.ChannelID
+		if strings.HasPrefix(msg.ChannelID, "dm_") {
+			name = "DM"
+		}
 		ch := &storage.Channel{
 			ChannelID:   msg.ChannelID,
-			Name:        msg.ChannelID,
+			Name:        name,
 			ChannelType: "text",
 			CreatedAt:   time.Now().UTC(),
 			UpdatedAt:   time.Now().UTC(),
 		}
 		if msg.ChannelType != "" {
 			ch.ChannelType = msg.ChannelType
-		}
-		if msg.Content != "" {
-			ch.Name = msg.Content
 		}
 		if strings.HasPrefix(msg.ChannelID, "dm_") {
 			ch.ChannelType = "dm"
@@ -516,22 +517,4 @@ func (h *StreamHandler) handleKeyExchange(s network.Stream, peerID string, msg *
 	h.node.Logger.Debug("key exchange complete with %s", peerID)
 }
 
-func (h *StreamHandler) ReceiveMessages(s network.Stream) {
-	r := bufio.NewReader(s)
-	for {
-		s.SetReadDeadline(time.Now().Add(30 * time.Second))
-		data, err := r.ReadBytes('\n')
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
-			}
-			return
-		}
-		var msg Message
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-		h.DecryptMessage(&msg, s.Conn().RemotePeer().String())
-		h.handleMessage(&msg, s)
-	}
-}
+

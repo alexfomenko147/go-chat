@@ -75,14 +75,8 @@ var (
 	DimmedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#808080"))
 
-	CommandStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FEE75C"))
-
 	ErrorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#ED4245"))
-
-	SuccessStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#57F287"))
 
 	ModeBadgeInput = lipgloss.NewStyle().
 			Background(lipgloss.Color("#FEE75C")).
@@ -106,7 +100,6 @@ var (
 				Padding(0, 1).
 				Bold(true)
 
-	DocStyle = lipgloss.NewStyle().Padding(1, 2, 1, 2)
 )
 
 func senderColor(s string) lipgloss.Color {
