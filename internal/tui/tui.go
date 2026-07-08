@@ -370,8 +370,13 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 				m.addStatus(fmt.Sprintf("Error: %v", err))
 				return nil
 			}
-			m.channelList = append(m.channelList, ch)
-			m.selectedChan = len(m.channelList) - 1
+			m.loadChannels()
+			for i, c := range m.channelList {
+				if c.ChannelID == ch.ChannelID {
+					m.selectedChan = i
+					break
+				}
+			}
 			m.loadMessages()
 			m.addStatus(fmt.Sprintf("Channel '%s' created", name))
 		case "list":
@@ -386,11 +391,20 @@ func (m *Model) handleCommand(text string) tea.Cmd {
 			return nil
 		}
 		peerID := parts[1]
-		if err := m.app.OpenDM(peerID); err != nil {
+		dmID, err := m.app.OpenDM(peerID)
+		if err != nil {
 			m.addStatus(fmt.Sprintf("Error: %v", err))
 			return nil
 		}
 		m.addStatus(fmt.Sprintf("DM with %s", peerID))
+		m.loadChannels()
+		for i, ch := range m.channelList {
+			if ch.ChannelID == dmID {
+				m.selectedChan = i
+				break
+			}
+		}
+		m.loadMessages()
 
 	case "/myaddr":
 		peerID := m.app.PeerID()
@@ -573,15 +587,37 @@ func (m *Model) loadLogs() {
 }
 
 func (m *Model) loadChannels() {
+	var currentID string
+	if len(m.channelList) > 0 && m.selectedChan < len(m.channelList) {
+		currentID = m.channelList[m.selectedChan].ChannelID
+	}
+
 	channels, err := m.app.ListChannels()
 	if err != nil {
 		m.addStatus(fmt.Sprintf("Error loading channels: %v", err))
 		return
 	}
 	m.channelList = channels
-	if len(m.channelList) > 0 && m.selectedChan >= len(m.channelList) {
+
+	if currentID != "" {
+		found := false
+		for i, ch := range m.channelList {
+			if ch.ChannelID == currentID {
+				m.selectedChan = i
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.selectedChan = 0
+		}
+	} else if m.selectedChan >= len(m.channelList) {
 		m.selectedChan = 0
 	}
+	if m.selectedChan < 0 {
+		m.selectedChan = 0
+	}
+
 	m.loadMessages()
 }
 

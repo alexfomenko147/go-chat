@@ -26,12 +26,17 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	m.node.Logger.Info("mDNS connected to: %s", pi.ID.String())
 
 	if m.node.Store != nil {
-		_ = m.node.Store.SavePeer(&storage.Peer{
-			PeerID:      pi.ID.String(),
-			DisplayName: pi.ID.String(),
-			Status:      "online",
-			LastSeen:    time.Now().UTC(),
-		})
+		existing, _ := m.node.Store.GetPeer(pi.ID.String())
+		if existing == nil {
+			_ = m.node.Store.SavePeer(&storage.Peer{
+				PeerID:      pi.ID.String(),
+				DisplayName: pi.ID.String(),
+				Status:      "online",
+				LastSeen:    time.Now().UTC(),
+			})
+		} else {
+			_ = m.node.Store.UpdatePeerStatus(pi.ID.String(), "online")
+		}
 	}
 
 	_ = m.node.SyncWithPeer(ctx, pi.ID)

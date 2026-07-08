@@ -189,6 +189,15 @@ func (a *App) SetDisplayName(name string) {
 	a.identity.DisplayName = name
 	a.identity.UpdatedAt = time.Now().UTC()
 	_ = a.Store.SaveIdentity(a.identity)
+
+	if a.Node != nil {
+		a.Node.Broadcast(&network.Message{
+			Type:      "sync_peer",
+			SenderID:  a.PeerID(),
+			Content:   name,
+			Timestamp: time.Now().UnixMilli(),
+		})
+	}
 }
 
 func (a *App) GetPeerDisplayName(peerID string) string {
@@ -285,7 +294,13 @@ func (a *App) ListPeers() ([]*storage.Peer, error) {
 
 		for _, p := range peers {
 			if connected[p.PeerID] {
-				p.Status = "online"
+				if p.Status != "online" {
+					p.Status = "online"
+					_ = a.Store.UpdatePeerStatus(p.PeerID, "online")
+				}
+			} else if p.Status == "online" {
+				p.Status = "offline"
+				_ = a.Store.UpdatePeerStatus(p.PeerID, "offline")
 			}
 		}
 
@@ -356,7 +371,7 @@ func (a *App) ListMessages(channelID string, limit, offset int) ([]*storage.Mess
 	return a.Store.ListMessages(channelID, limit, offset)
 }
 
-func (a *App) OpenDM(peerID string) error {
+func (a *App) OpenDM(peerID string) (string, error) {
 	myID := a.PeerID()
 	channelID := fmt.Sprintf("dm_%s_%s", myID, peerID)
 	if myID > peerID {
@@ -365,7 +380,7 @@ func (a *App) OpenDM(peerID string) error {
 
 	ch, err := a.channelManager.GetChannel(channelID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if ch == nil {
 		dn := a.GetPeerDisplayName(peerID)
@@ -378,12 +393,12 @@ func (a *App) OpenDM(peerID string) error {
 			UpdatedAt:   now,
 		}
 		if err := a.Store.SaveChannel(ch); err != nil {
-			return fmt.Errorf("save dm channel: %w", err)
+			return "", fmt.Errorf("save dm channel: %w", err)
 		}
 	}
 
 	a.activeChan = channelID
-	return nil
+	return channelID, nil
 }
 
 func (a *App) IsDefaultName() bool {
