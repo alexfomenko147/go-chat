@@ -27,18 +27,6 @@ func (h *StreamHandler) Handle(s network.Stream) {
 	peerID := s.Conn().RemotePeer().String()
 	r := bufio.NewReader(s)
 
-	if h.node.Store != nil {
-		existing, _ := h.node.Store.GetPeer(peerID)
-		if existing == nil {
-			_ = h.node.Store.SavePeer(&storage.Peer{
-				PeerID:      peerID,
-				DisplayName: peerID,
-				Status:      "online",
-				LastSeen:    time.Now().UTC(),
-			})
-		}
-	}
-
 	for {
 		data, err := r.ReadBytes('\n')
 		if err != nil {
@@ -243,6 +231,9 @@ func (h *StreamHandler) handleSyncChannel(msg *Message, s network.Stream) {
 
 func (h *StreamHandler) handleSyncPeer(msg *Message) {
 	if msg.SenderID == "" || msg.Content == "" {
+		return
+	}
+	if msg.Content == "me" || strings.HasPrefix(msg.Content, "me_") {
 		return
 	}
 	name := msg.Content

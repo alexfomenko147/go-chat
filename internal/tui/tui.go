@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"go-chat/internal/app"
 	"go-chat/internal/crypto"
@@ -54,6 +53,7 @@ type Model struct {
 
 	pendingConnect string
 	needsName      bool
+	namePromptErr  string
 
 	err          error
 }
@@ -67,38 +67,25 @@ func NewModel(a *app.App) *Model {
 
 	a.Logger.SetConsoleOutput(false)
 
-	needsName := a.IsDefaultName()
-
 	m := &Model{
 		app:         a,
 		input:       ti,
 		inputMode:   true,
 		firstLaunch: true,
-		needsName:   needsName,
+		needsName:   a.IsDefaultName(),
 		statusText:  fmt.Sprintf("PeerID: %s | /myaddr to see shareable address", a.PeerID()),
-	}
-
-	if needsName {
-		ti.Placeholder = "Enter your display name..."
 	}
 
 	return m
 }
 
-type tickMsg time.Time
 type refreshMsg struct{}
 
 func (m *Model) Init() tea.Cmd {
 	m.loadChannels()
 	m.loadPeers()
 	m.loadLogs()
-	return tea.Batch(textinput.Blink, m.nextTick(), m.waitForEvent())
-}
-
-func (m *Model) nextTick() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
+	return tea.Batch(textinput.Blink, m.waitForEvent())
 }
 
 func (m *Model) waitForEvent() tea.Cmd {
@@ -115,12 +102,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshMsg:
 		m.loadChannels()
 		m.loadPeers()
-		return m, m.waitForEvent()
-
-	case tickMsg:
-		m.loadPeers()
 		m.loadLogs()
-		return m, m.nextTick()
+		return m, m.waitForEvent()
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -147,6 +130,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Width = m.width - 56
 
 	case tea.KeyMsg:
+		if m.needsName {
+			switch msg.String() {
+			case "ctrl+c", "ctrl+q":
+				return m, tea.Quit
+			case "enter":
+				return m, m.handleInput()
+			default:
+				m.namePromptErr = ""
+				var cmd tea.Cmd
+				m.input, cmd = m.input.Update(msg)
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
+
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			return m, tea.Quit
@@ -197,7 +195,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.inputMode {
+	if !m.needsName && m.inputMode {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		cmds = append(cmds, cmd)
@@ -217,20 +215,31 @@ func (m *Model) handleInput() tea.Cmd {
 	}
 
 	if m.needsName {
-		m.needsName = false
-		m.input.Placeholder = "Type a message or /help..."
 		if strings.HasPrefix(text, "/") {
 			return m.handleCommand(text)
 		}
 		name := strings.TrimSpace(text)
 		if name == "" || name == "me" || strings.HasPrefix(name, "me_") {
-			m.addStatus("Invalid or reserved name")
-			m.needsName = true
-			m.input.Placeholder = "Enter your display name..."
+			m.namePromptErr = "Invalid or reserved name. Please choose another."
 			return nil
 		}
+		m.needsName = false
 		m.app.SetDisplayName(name)
+		m.input.Placeholder = "Type a message or /help..."
 		m.addStatus(fmt.Sprintf("Display name set to '%s'", name))
+		if m.pendingConnect != "" {
+			addr := m.pendingConnect
+			m.pendingConnect = ""
+			m.addStatus(fmt.Sprintf("Connecting to %s...", addr))
+			if err := m.app.Connect(addr); err != nil {
+				m.addStatus(fmt.Sprintf("Connect error: %v", err))
+				return nil
+			}
+			m.app.SaveConnection(addr)
+			m.addStatus(fmt.Sprintf("Connected to %s", addr))
+			m.loadChannels()
+			m.loadPeers()
+		}
 		return nil
 	}
 
@@ -616,6 +625,9 @@ func (m *Model) View() string {
 	if !m.ready {
 		return "\n  Initializing..."
 	}
+	if m.needsName {
+		return m.renderNameModal()
+	}
 
 	channelPanel := m.renderChannelPanel()
 	logPanel := m.renderLogPanel()
@@ -639,6 +651,39 @@ func (m *Model) View() string {
 	body := lipgloss.JoinVertical(lipgloss.Left, topRow, input, statusBar)
 
 	return AppStyle.Render(body)
+}
+
+func (m *Model) renderNameModal() string {
+	modalW := 50
+	inputW := modalW - 8
+
+	m.input.Width = inputW
+
+	title := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Render("Welcome to go-chat!")
+
+	prompt := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#B9BBBE")).
+		Render("Enter your display name to get started:")
+
+	input := m.input.View()
+
+	parts := []string{title, "", prompt, "", input}
+	if m.namePromptErr != "" {
+		parts = append(parts, "", ErrorStyle.Render(m.namePromptErr))
+	}
+	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
+
+	box := lipgloss.NewStyle().
+		Width(modalW).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#57F287")).
+		Render(content)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 func (m *Model) renderChannelPanel() string {
